@@ -72,8 +72,10 @@ class EnvConfig:
     # Classic or Invertible Bicycle dynamics model
     action_space_steer_disc: int = 13
     action_space_accel_disc: int = 7
+    action_space_head_tilt_disc: int = 7
     max_steer_angle: float = 1.57  # in radians: pi/2 = 1.57, pi/3 = 1.05
     max_accel_value: float = 4.0
+    max_head_tilt_angle: float = 0.7854 # 45°
     steer_actions: torch.Tensor = torch.round(
         torch.linspace(
             -max_steer_angle, max_steer_angle, action_space_steer_disc
@@ -86,7 +88,12 @@ class EnvConfig:
         ),
         decimals=3,
     )
-    head_tilt_actions: torch.Tensor = torch.Tensor([0])
+    head_tilt_actions: torch.Tensor = torch.round(
+        torch.linspace(
+            -max_head_tilt_angle, max_head_tilt_angle, action_space_head_tilt_disc
+        ),
+        decimals=3,
+    )
 
     # Delta Local dynamics model
     dx: torch.Tensor = torch.round(torch.linspace(-2.0, 2.0, 20), decimals=3)

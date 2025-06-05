@@ -1169,7 +1169,7 @@ class GPUDriveTorchEnv(GPUDriveGymEnv):
         elif self.config.dynamics_model == "classic":
             self.steer_actions = self.config.steer_actions.to(self.device)
             self.accel_actions = self.config.accel_actions.to(self.device)
-            self.head_actions = torch.tensor([0], device=self.device)
+            self.head_actions = self.config.head_tilt_actions.to(self.device)
             action_1 = self.steer_actions.clone().cpu().numpy()
             action_2 = self.accel_actions.clone().cpu().numpy()
             action_3 = self.head_actions.clone().cpu().numpy()
@@ -1871,6 +1871,7 @@ class GPUDriveTorchEnv(GPUDriveGymEnv):
                     focus_env_idx, agent_idx
                 ].item(),
                 route_progress=self.route_progress[agent_idx],
+                previous_actions=self.previous_action_value_tensor # for head angle
             )
             agent_views.append(agent_obs)
 
