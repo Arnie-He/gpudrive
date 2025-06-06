@@ -5,8 +5,8 @@ import imageio
 import logging
 import argparse
 
-from pygpudrive.env.config import EnvConfig, RenderConfig, SceneConfig
-from pygpudrive.env.env_torch import GPUDriveTorchEnv
+from gpudrive.env.config import EnvConfig, RenderConfig, SceneConfig
+from gpudrive.env.env_torch import GPUDriveTorchEnv
 
 logging.getLogger(__name__)
 

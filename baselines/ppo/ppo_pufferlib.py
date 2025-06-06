@@ -32,7 +32,6 @@ from typer import Typer
 
 app = Typer()
 
-
 def get_model_parameters(policy):
     """Helper function to count the number of trainable parameters."""
     params = filter(lambda p: p.requires_grad, policy.parameters())
@@ -280,6 +279,7 @@ def run(
         "device", "cpu"
     )  # Default to 'cpu' if not set
     if torch.cuda.is_available():
+        print("Using GPU")
         config["train"]["device"] = "cuda"  # Set to 'cuda' if available
 
     # Make dataloader
@@ -291,7 +291,7 @@ def run(
         else config.environment.k_unique_scenes,
         sample_with_replacement=config.train.sample_with_replacement,
         shuffle=config.train.shuffle_dataset,
-        seed=seed,
+        seed=seed if seed is not None else 42,
     )
 
     # Make environment
