@@ -13,7 +13,7 @@ environment:
   name: "gpudrive"
   num_worlds: 64  # Reduced for faster training
   k_unique_scenes: 64
-  max_controlled_agents: 2 # Maximum number of agents controlled by the model. Make sure this aligns with the variable kMaxAgentCount in src/consts.hpp
+  max_controlled_agents: 64 # Maximum number of agents controlled by the model. Make sure this aligns with the variable kMaxAgentCount in src/consts.hpp
   ego_state: true
   road_map_obs: true
   partner_obs: true
@@ -24,7 +24,7 @@ environment:
   collision_weight: -0.75
   off_road_weight: -0.75
   goal_achieved_weight: 1.0
-  dynamics_model: "classic"
+  dynamics_model: "delta_local"
   collision_behavior: "ignore"
   dist_to_goal_threshold: 2.0
   polyline_reduction_threshold: 0.1
@@ -64,9 +64,9 @@ train:
 
   # PPO - OPTIMIZED FOR GAIL
   torch_deterministic: false
-  total_timesteps: 10_000_000
-  batch_size: 16384        # 8x smaller than original (131072 -> 16384)
-  minibatch_size: 2048     # 4x smaller than original (8192 -> 2048)
+  total_timesteps: 100_000_000
+  batch_size: 2048        # 8x smaller than original (131072 -> 16384)
+  minibatch_size: 512     # 4x smaller than original (8192 -> 2048)
   learning_rate: 3e-4
   anneal_lr: false
   gamma: 0.99
@@ -111,12 +111,12 @@ train:
   checkpoint_path: "./runs"
 
   # Rendering
-  render: false
-  render_3d: true
-  render_interval: 1
-  render_k_scenarios: 10
-  render_format: "mp4"
-  render_fps: 15
+  render: false # Determines whether to render the environment (note: will slow down training)
+  render_3d: true # Render simulator state in 3d or 2d
+  render_interval: 1 # Render every k iterations
+  render_k_scenarios: 10 # Number of scenarios to render
+  render_format: "mp4" # Options: gif, mp4
+  render_fps: 15 # Frames per second
   zoom_radius: 50
 
 vec:

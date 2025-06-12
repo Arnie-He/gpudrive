@@ -69,8 +69,8 @@ class EnvConfig:
     head_tilt_actions: torch.Tensor = torch.Tensor([0])
 
     # Delta Local dynamics model
-    dx: torch.Tensor = torch.round(torch.linspace(-2.0, 2.0, 20), decimals=3)
-    dy: torch.Tensor = torch.round(torch.linspace(-2.0, 2.0, 20), decimals=3)
+    dx: torch.Tensor = torch.round(torch.linspace(-3.0, 3.0, 20), decimals=3)
+    dy: torch.Tensor = torch.round(torch.linspace(-3.0, 3.0, 20), decimals=3)
     dyaw: torch.Tensor = torch.round(
         torch.linspace(-3.14, 3.14, 20), decimals=3
     )

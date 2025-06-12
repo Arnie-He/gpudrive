@@ -46,8 +46,13 @@ def get_model_parameters(policy):
 class Discriminator(nn.Module):
     """Discriminator network for GAIL that distinguishes expert from policy trajectories."""
     
-    def __init__(self, obs_dim, action_dim, hidden_dim=256, dropout=0.0):
+    def __init__(self, obs_dim, action_dim, hidden_dim=256, dropout=0.0, num_action_classes=None):
         super().__init__()
+        
+        # Store dimensions for later use
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.num_action_classes = num_action_classes
         
         # Input is state-action pair
         input_dim = obs_dim + action_dim
@@ -79,15 +84,10 @@ class Discriminator(nn.Module):
         Returns:
             logits: Tensor of shape (batch_size, 1) - logit for real (expert) vs fake (policy)
         """
-        # Handle discrete actions
-        if actions.dim() == 1:
-            # Convert discrete actions to one-hot if needed
-            if actions.dtype in (torch.long, torch.int):
-                actions = F.one_hot(actions, num_classes=self.network[0].in_features - states.shape[-1]).float()
-            else:
-                actions = actions.unsqueeze(-1)
+        # print(f"states: {states.shape}, actions: {actions.shape}")
         
         # Concatenate state and action
+        actions = actions.reshape(-1,1)
         state_action = torch.cat([states, actions], dim=-1)
         return self.network(state_action)
     
@@ -107,7 +107,6 @@ class Discriminator(nn.Module):
 
 class ExpertDataset:
     """Dataset for storing and sampling expert trajectories."""
-    
     def __init__(self, expert_obs, expert_actions, device='cpu'):
         self.expert_obs = expert_obs.to(device)
         self.expert_actions = expert_actions.to(device)
@@ -154,13 +153,16 @@ class GAILTrainer:
     def train_discriminator(self, num_epochs=5):
         """Train discriminator to distinguish expert from policy data."""
         if len(self.policy_obs_buffer) < self.config.min_policy_data:
+            print(f"  Skipping discriminator training - insufficient policy data ({len(self.policy_obs_buffer)} < {self.config.min_policy_data})")
             return
             
+        # print(f"  Training discriminator for {num_epochs} epochs with {len(self.policy_obs_buffer)} policy samples...")
         disc_losses = []
         expert_accs = []
         policy_accs = []
         
         for epoch in range(num_epochs):
+            # print(f"    Discriminator epoch {epoch + 1}/{num_epochs}")
             # Sample expert data
             expert_obs, expert_actions = self.expert_dataset.sample(self.config.discriminator_batch_size // 2)
             
@@ -186,6 +188,7 @@ class GAILTrainer:
             
             # Combine data
             all_obs = torch.cat([expert_obs, policy_obs])
+            policy_actions = policy_actions.reshape(-1,1)
             all_actions = torch.cat([expert_actions, policy_actions])
             all_labels = torch.cat([expert_labels, policy_labels])
             
@@ -213,9 +216,15 @@ class GAILTrainer:
                 policy_accs.append(policy_acc.item())
         
         # Store averages
-        self.disc_losses.append(np.mean(disc_losses))
-        self.disc_expert_acc.append(np.mean(expert_accs))
-        self.disc_policy_acc.append(np.mean(policy_accs))
+        avg_loss = np.mean(disc_losses)
+        avg_expert_acc = np.mean(expert_accs)
+        avg_policy_acc = np.mean(policy_accs)
+        
+        self.disc_losses.append(avg_loss)
+        self.disc_expert_acc.append(avg_expert_acc)
+        self.disc_policy_acc.append(avg_policy_acc)
+        
+        # print(f"  Discriminator training completed - Loss: {avg_loss:.4f}, Expert Acc: {avg_expert_acc:.4f}, Policy Acc: {avg_policy_acc:.4f}")
         
         # Log to wandb
         if hasattr(self.policy_trainer_data, 'wandb') and self.policy_trainer_data.wandb:
@@ -234,17 +243,19 @@ def load_config(config_path):
     return pufferlib.namespace(**config)
 
 
-def load_expert_data(config, env):
+def load_expert_data(config, vecenv):
     """Load expert demonstrations for GAIL training."""
     print("Generating expert demonstrations...")
     
     # Generate expert data using the existing function
     expert_obs, expert_actions, _, _, goal_rate, collision_rate = generate_state_action_pairs(
-        env=env,
+        env=vecenv.env,
         device=config.device,
-        action_space_type="discrete" if hasattr(env, 'single_action_space') and hasattr(env.single_action_space, 'n') else "continuous",
+        action_space_type="discrete" if hasattr(vecenv.env, 'single_action_space') and hasattr(vecenv.env.single_action_space, 'n') else "continuous",
         use_action_indices=True,
-        make_video=False,
+        make_video=True,
+        render_index=[0, 1],
+        save_path="output/expert_vis_test1",
     )
     
     print(f"Expert data: {len(expert_obs)} transitions, Goal rate: {goal_rate:.3f}, Collision rate: {collision_rate:.3f}")
@@ -298,17 +309,28 @@ def train_gail(args, vecenv):
     args.train.__dict__.update(dict(args.wandb.config.train))
 
     # Load expert data
-    expert_obs, expert_actions = load_expert_data(args.train, vecenv.driver_env)
+    expert_obs, expert_actions = load_expert_data(args.train, vecenv)
     expert_dataset = ExpertDataset(expert_obs, expert_actions, device=args.train.device)
     
     # Create discriminator
     obs_dim = expert_obs.shape[-1]
-    action_dim = 1 if expert_actions.dim() == 1 else expert_actions.shape[-1]
+    
+    # Determine action space info
+    if expert_actions.dim() == 1 and expert_actions.dtype in (torch.long, torch.int):
+        # Discrete actions - use number of unique actions as dimension
+        num_action_classes = int(expert_actions.max().item()) + 1
+        action_dim = num_action_classes  # For one-hot encoding
+    else:
+        # Continuous actions or already processed
+        action_dim = 1 if expert_actions.dim() == 1 else expert_actions.shape[-1]
+        num_action_classes = None
+    
     discriminator = Discriminator(
         obs_dim=obs_dim,
         action_dim=action_dim,
         hidden_dim=args.train.discriminator_hidden_dim,
-        dropout=args.train.discriminator_dropout
+        dropout=args.train.discriminator_dropout,
+        num_action_classes=num_action_classes
     ).to(args.train.device)
     
     # Create PPO trainer
@@ -366,12 +388,29 @@ def train_gail(args, vecenv):
     step_count = 0
     while ppo_data.global_step < args.train.total_timesteps:
         try:
+            # print(f"\n=== Training Step {step_count + 1} | Global Step {ppo_data.global_step} ===")
+            
             # Standard PPO rollout but collect data for discriminator
+            # print("Starting PPO rollout...")
             ppo.evaluate(ppo_data)
             
             # Extract rollout data for discriminator training
-            obs_data = ppo_data.experience.obs[:ppo_data.experience.ptr].flatten(0, 1)
-            action_data = ppo_data.experience.action[:ppo_data.experience.ptr].flatten(0, 1)
+            obs_data = ppo_data.experience.obs[:ppo_data.experience.ptr]
+            
+            # Handle actions - check dimensions before flattening
+            actions_slice = ppo_data.experience.actions[:ppo_data.experience.ptr]
+
+            # print("obs_data shape: ", obs_data.shape)
+            # print("actions_slice shape: ", actions_slice.shape)
+            # print("actions_slice: ", actions_slice)
+            # print("actions_slice shape: ", actions_slice.shape)
+            # print("ppo_data.experience.action: ", ppo_data.experience.actions)
+            # if actions_slice.dim() >= 2:
+            #     action_data = actions_slice.flatten(0, 1)
+            # else:
+            #     # If actions are 1D, just use them as is
+            #     action_data = actions_slice
+            action_data = actions_slice
             
             # Add policy data to GAIL trainer
             gail_trainer.add_policy_data(obs_data, action_data)
@@ -383,15 +422,19 @@ def train_gail(args, vecenv):
                     action_data.to(args.train.device)
                 )
                 # Reshape to match experience buffer format
-                disc_rewards = disc_rewards.view(ppo_data.experience.reward[:ppo_data.experience.ptr].shape)
-                ppo_data.experience.reward[:ppo_data.experience.ptr] = disc_rewards.cpu()
+                disc_rewards = disc_rewards.view(ppo_data.experience.rewards[:ppo_data.experience.ptr].shape)
+                ppo_data.experience.rewards[:ppo_data.experience.ptr] = disc_rewards.cpu()
             
             # Train discriminator every few steps
             if step_count % args.train.discriminator_update_freq == 0:
+                # print(f"Starting discriminator training (step {step_count + 1})...")
                 gail_trainer.train_discriminator(args.train.discriminator_epochs)
+                # print("Discriminator training completed.")
             
             # Train policy with discriminator rewards
+            # print("Starting RL (PPO) policy training...")
             ppo.train(ppo_data)
+            # print("RL (PPO) policy training completed.")
             
             step_count += 1
             
@@ -428,26 +471,26 @@ def init_wandb(args, name, id=None, resume=True):
     return wandb
 
 
-def sweep(args, project="PPO", sweep_name="my_sweep"):
-    """Initialize a WandB sweep with hyperparameters."""
-    sweep_id = wandb.sweep(
-        sweep=dict(
-            method="random",
-            name=sweep_name,
-            metric={"goal": "maximize", "name": "environment/episode_return"},
-            parameters={
-                "learning_rate": {
-                    "distribution": "log_uniform_values",
-                    "min": 1e-4,
-                    "max": 1e-1,
-                },
-                "batch_size": {"values": [512, 1024, 2048]},
-                "minibatch_size": {"values": [128, 256, 512]},
-            },
-        ),
-        project=project,
-    )
-    wandb.agent(sweep_id, lambda: train(args), count=100)
+# def sweep(args, project="PPO", sweep_name="my_sweep"):
+#     """Initialize a WandB sweep with hyperparameters."""
+#     sweep_id = wandb.sweep(
+#         sweep=dict(
+#             method="random",
+#             name=sweep_name,
+#             metric={"goal": "maximize", "name": "environment/episode_return"},
+#             parameters={
+#                 "learning_rate": {
+#                     "distribution": "log_uniform_values",
+#                     "min": 1e-4,
+#                     "max": 1e-1,
+#                 },
+#                 "batch_size": {"values": [512, 1024, 2048]},
+#                 "minibatch_size": {"values": [128, 256, 512]},
+#             },
+#         ),
+#         project=project,
+#     )
+#     wandb.agent(sweep_id, lambda: train(args), count=100)
 
 
 @app.command()
@@ -488,7 +531,7 @@ def run(
     gamma: Annotated[Optional[float], typer.Option(help="The discount factor for rewards")] = None,
     vf_coef: Annotated[Optional[float], typer.Option(help="Weight for vf_loss")] = None,
     # GAIL-specific options
-    use_gail: Annotated[Optional[bool], typer.Option(help="Use GAIL instead of regular PPO")] = False,
+    use_gail: Annotated[Optional[bool], typer.Option(help="Use GAIL instead of regular PPO")] = None,
     discriminator_lr: Annotated[Optional[float], typer.Option(help="Learning rate for discriminator")] = None,
     discriminator_hidden_dim: Annotated[Optional[int], typer.Option(help="Hidden dimension for discriminator")] = None,
     discriminator_dropout: Annotated[Optional[float], typer.Option(help="Dropout rate for discriminator")] = None,
@@ -631,13 +674,15 @@ def run(
         **config.train,
     )
 
+
     # Choose training method
-    if config.train.use_gail:
-        print("Starting GAIL training...")
-        train_gail(config, vecenv)
-    else:
-        print("Starting regular PPO training...")
-        train_ppo(config, vecenv)
+    # if config.train.use_gail:
+    #     print("Starting GAIL training...")
+    #     train_gail(config, vecenv)
+    # else:
+    #     print("Starting regular PPO training...")
+    #     train_ppo(config, vecenv)
+    train_gail(config, vecenv)
 
 
 def train_ppo(args, vecenv):

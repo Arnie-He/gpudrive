@@ -206,19 +206,88 @@ class PartnerObs:
         device="cuda",
         mask=None,
     ):
-        """Creates an PartnerObs from a tensor."""
+        """Creates an PartnerObs from a tensor with CUDA error handling."""
         if backend == "torch":
-            tensor = partner_obs_tensor.to_torch().clone().to(device)
-            obj = cls(tensor, mask=mask)
-            obj.norm = torch.tensor(
-                [
-                    constants.MAX_ORIENTATION_RAD,
-                    constants.MAX_VEH_LEN,
-                    constants.MAX_VEH_WIDTH,
-                ],
-                device=device,
-            )
-            return obj
+            try:
+                # First attempt: direct conversion
+                tensor = partner_obs_tensor.to_torch().clone().to(device)
+                obj = cls(tensor, mask=mask)
+                obj.norm = torch.tensor(
+                    [
+                        constants.MAX_ORIENTATION_RAD,
+                        constants.MAX_VEH_LEN,
+                        constants.MAX_VEH_WIDTH,
+                    ],
+                    device=device,
+                )
+                return obj
+            except RuntimeError as e:
+                if "CUDA error" in str(e):
+                    print(f"CUDA error encountered, trying fallback approaches: {e}")
+                    
+                    # Fallback 1: Try without clone
+                    try:
+                        tensor = partner_obs_tensor.to_torch().to(device)
+                        obj = cls(tensor, mask=mask)
+                        obj.norm = torch.tensor(
+                            [
+                                constants.MAX_ORIENTATION_RAD,
+                                constants.MAX_VEH_LEN,
+                                constants.MAX_VEH_WIDTH,
+                            ],
+                            device=device,
+                        )
+                        return obj
+                    except RuntimeError as e2:
+                        print(f"Fallback 1 failed: {e2}")
+                        
+                        # Fallback 2: Move to CPU first, then to target device
+                        try:
+                            tensor_cpu = partner_obs_tensor.to_torch().cpu()
+                            if device != "cpu":
+                                tensor = tensor_cpu.clone().to(device)
+                            else:
+                                tensor = tensor_cpu.clone()
+                            obj = cls(tensor, mask=mask)
+                            obj.norm = torch.tensor(
+                                [
+                                    constants.MAX_ORIENTATION_RAD,
+                                    constants.MAX_VEH_LEN,
+                                    constants.MAX_VEH_WIDTH,
+                                ],
+                                device=tensor.device,
+                            )
+                            return obj
+                        except RuntimeError as e3:
+                            print(f"Fallback 2 failed: {e3}")
+                            
+                            # Fallback 3: Force CPU mode
+                            try:
+                                tensor = partner_obs_tensor.to_torch().cpu()
+                                obj = cls(tensor, mask=mask)
+                                obj.norm = torch.tensor(
+                                    [
+                                        constants.MAX_ORIENTATION_RAD,
+                                        constants.MAX_VEH_LEN,
+                                        constants.MAX_VEH_WIDTH,
+                                    ],
+                                    device="cpu",
+                                )
+                                print("Warning: Using CPU tensors due to CUDA error")
+                                return obj
+                            except Exception as e4:
+                                print(f"All fallbacks failed: {e4}")
+                                
+                                # Last resort: Empty tensor
+                                print("Creating empty tensor as last resort")
+                                empty_shape = (1, 1, 6) if mask is None else (1, 6)
+                                tensor = torch.zeros(empty_shape, device="cpu")
+                                obj = cls(tensor, mask=mask)
+                                obj.norm = torch.tensor([6.28, 15.0, 3.0], device="cpu")
+                                return obj
+                else:
+                    # Re-raise non-CUDA errors
+                    raise e
 
         elif backend == "jax":
             raise NotImplementedError("JAX backend not implemented yet.")

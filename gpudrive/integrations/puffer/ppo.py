@@ -48,8 +48,10 @@ def create(config, vecenv, policy, optimizer=None, wandb=None):
 
     vecenv.async_reset(config.seed)
     obs_shape = vecenv.single_observation_space.shape
+    # print("obs_shape: ", obs_shape)
     obs_dtype = vecenv.single_observation_space.dtype
     atn_shape = vecenv.single_action_space.shape
+    # print("atn_shape: ", atn_shape)
     total_agents = vecenv.num_agents
 
     # Log initial data coverage

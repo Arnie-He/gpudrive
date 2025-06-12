@@ -5,9 +5,8 @@ import imageio
 import logging
 import argparse
 
-from gpudrive.env.config import EnvConfig, RenderConfig, SceneConfig
-from gpudrive.env.env_torch import GPUDriveTorchEnv
-from gpudrive.visualize.utils import img_from_fig
+from pygpudrive.env.config import EnvConfig, RenderConfig, SceneConfig
+from pygpudrive.env.env_torch import GPUDriveTorchEnv
 
 logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ def generate_state_action_pairs(
             tuple with (acceleration, steering, heading).
         obs_tensor: Expert observations for the controlled agents.
     """
-    frames = {f"world_{i}": [] for i in range(render_index[0], render_index[1])}
+    frames = [[] for _ in range(render_index[1] - render_index[0])]
 
     logging.info(
         f"Generating expert actions and observations for {env.num_worlds} worlds \n"
@@ -175,21 +174,14 @@ def generate_state_action_pairs(
 
         # Render
         if make_video:
-            env_indices = list(range(render_index[0], render_index[1]))
-            if env_indices:  # Only render if there are environments to render
-                figs = env.vis.plot_simulator_state(
-                    env_indices=env_indices,
-                    time_steps=[time_step] * len(env_indices),
-                    zoom_radius=100,
-                )
-                for i, env_id in enumerate(env_indices):
-                    frames[f"world_{env_id}"].append(img_from_fig(figs[i]))
+            for render in range(render_index[0], render_index[1]):
+                frame = env.render(world_render_idx=render)
+                frames[render].append(frame)
         if (dead_agent_mask == True).all():
             break
 
-    print("infos: ", infos)
-    is_collision = infos.collided
-    is_goal = infos.goal_achieved
+    is_collision = infos[:, :, :3].sum(dim=-1)
+    is_goal = infos[:, :, 3]
     collision_mask = is_collision != 0
     goal_mask = is_goal != 0
     valid_collision_mask = collision_mask & alive_agent_mask
@@ -202,26 +194,12 @@ def generate_state_action_pairs(
     print(f"Collision {collision_rate} Goal {goal_rate}")
 
     if make_video:
-        import os
-        from pathlib import Path
-        from PIL import Image
-        # Create the directory if it doesn't exist
-        # Create output directory if it doesn't exist
-        output_dir = Path(save_path)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        # Save each environment's video as a separate GIF file
-        for env_id, env_frames in frames.items():
-            output_path = output_dir / f"{env_id}.gif"
-            # Convert frames to PIL Images and save as GIF
-            pil_frames = [Image.fromarray(frame) for frame in env_frames]
-            pil_frames[0].save(
-                output_path,
-                save_all=True,
-                append_images=pil_frames[1:],
-                duration=200,  # 200ms per frame (5 fps)
-                loop=0
+        for render in range(render_index[0], render_index[1]):
+            imageio.mimwrite(
+                f"{save_path}_world_{render}.mp4",
+                np.array(frames[render]),
+                fps=30,
             )
-            print(f"Saved video to {output_path}")
 
     flat_expert_obs = torch.cat(expert_observations_lst, dim=0)
     flat_expert_actions = torch.cat(expert_actions_lst, dim=0)
