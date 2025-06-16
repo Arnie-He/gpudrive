@@ -733,13 +733,11 @@ class GPUDriveTorchEnv(GPUDriveGymEnv):
                 f"Continuous action space is currently not supported for dynamics_model: {self.config.dynamics_model}."
             )
 
-        action_space = Tuple(
-            (
-                Box(action_1.min(), action_1.max(), shape=(1,)),
-                Box(action_2.min(), action_2.max(), shape=(1,)),
-                Box(action_3.min(), action_3.max(), shape=(1,)),
-            )
-        )
+        # Create a single Box space instead of Tuple for PufferLib compatibility
+        low = np.array([action_1.min(), action_2.min(), action_3.min()])
+        high = np.array([action_1.max(), action_2.max(), action_3.max()])
+        action_space = Box(low=low, high=high, shape=(3,), dtype=np.float32)
+        
         return action_space
 
     def _get_ego_state(self, mask=None) -> torch.Tensor:

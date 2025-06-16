@@ -70,12 +70,26 @@ def make_agent(env, config):
 
     else:
         # Start from scratch
+        # Detect if action space is continuous or discrete
+        if hasattr(env.single_action_space, 'n'):
+            # Discrete action space
+            action_dim = env.single_action_space.n
+            continuous_actions = False
+            print(f"Policy: Using DISCRETE actions with {action_dim} possible actions")
+        else:
+            # Continuous action space
+            action_dim = env.single_action_space.shape[0]
+            continuous_actions = True
+            print(f"Policy: Using CONTINUOUS actions with {action_dim}D action space")
+            print(f"Action bounds: {env.single_action_space.low} to {env.single_action_space.high}")
+            
         return NeuralNet(
             input_dim=config.train.network.input_dim,
-            action_dim=env.single_action_space.n,
+            action_dim=action_dim,
             hidden_dim=config.train.network.hidden_dim,
             dropout=config.train.network.dropout,
             config=config.environment,
+            continuous_actions=continuous_actions,
         )
 
 
@@ -169,6 +183,7 @@ def run(
     obs_radius: Annotated[Optional[float], typer.Option(help="The radius for the observation")] = None,
     collision_behavior: Annotated[Optional[str], typer.Option(help="The collision behavior; 'ignore' or 'remove'")] = None,
     remove_non_vehicles: Annotated[Optional[int], typer.Option(help="Remove non-vehicles from the scene; 0 or 1")] = None,
+    action_type: Annotated[Optional[str], typer.Option(help="Action space type; 'discrete' or 'continuous'")] = None,
     use_vbd: Annotated[Optional[bool], typer.Option(help="Use VBD model for trajectory predictions")] = False,
     vbd_model_path: Annotated[Optional[str], typer.Option(help="Path to VBD model checkpoint")] = None,
     vbd_trajectory_weight: Annotated[Optional[float], typer.Option(help="Weight for VBD trajectory deviation penalty")] = 0.1,
@@ -214,6 +229,7 @@ def run(
         "remove_non_vehicles": None
         if remove_non_vehicles is None
         else bool(remove_non_vehicles),
+        "action_type": action_type,
         "use_vbd": use_vbd,
         "vbd_model_path": vbd_model_path,
         "vbd_trajectory_weight": vbd_trajectory_weight,

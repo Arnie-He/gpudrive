@@ -557,8 +557,10 @@ class Experience:
             pin_memory=pin,
             device=device if not pin else "cpu",
         )
+        # Use float32 for continuous actions, int for discrete actions
+        action_dtype = torch.float32 if len(atn_shape) > 0 and atn_shape[0] > 1 else int
         self.actions = torch.zeros(
-            batch_size, *atn_shape, dtype=int, pin_memory=pin
+            batch_size, *atn_shape, dtype=action_dtype, pin_memory=pin
         )
         self.logprobs = torch.zeros(batch_size, pin_memory=pin)
         self.rewards = torch.zeros(batch_size, pin_memory=pin)

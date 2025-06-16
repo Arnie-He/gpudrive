@@ -26,6 +26,7 @@ from gpudrive.env.env_puffer import PufferGPUDrive
 from gpudrive.networks.late_fusion import NeuralNet
 from gpudrive.env.dataset import SceneDataLoader
 from baselines.imitation_data_generation import generate_state_action_pairs
+from irl.storage import save_trajectory
 
 import pufferlib
 import pufferlib.vector
@@ -66,11 +67,7 @@ class Discriminator(nn.Module):
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1)
+            nn.Linear(hidden_dim, 1)
         )
         
     def forward(self, states, actions):
@@ -84,10 +81,20 @@ class Discriminator(nn.Module):
         Returns:
             logits: Tensor of shape (batch_size, 1) - logit for real (expert) vs fake (policy)
         """
-        # print(f"states: {states.shape}, actions: {actions.shape}")
-        
+        print(f"states: {states.shape}, actions: {actions.shape}")
+        # Ensure actions have correct shape
+        if actions.dim() == 1:
+            # If actions are 1D (discrete), reshape to (batch_size, 1)
+            actions = actions.reshape(-1, 1)
+        elif actions.dim() > 2:
+            # If actions have extra dimensions, flatten them
+            actions = actions.reshape(actions.shape[0], -1)
+            
+        # Ensure states have correct shape
+        if states.dim() > 2:
+            states = states.reshape(states.shape[0], -1)
+            
         # Concatenate state and action
-        actions = actions.reshape(-1,1)
         state_action = torch.cat([states, actions], dim=-1)
         return self.network(state_action)
     
@@ -108,8 +115,8 @@ class Discriminator(nn.Module):
 class ExpertDataset:
     """Dataset for storing and sampling expert trajectories."""
     def __init__(self, expert_obs, expert_actions, device='cpu'):
-        self.expert_obs = expert_obs.to(device)
-        self.expert_actions = expert_actions.to(device)
+        self.expert_obs = expert_obs
+        self.expert_actions = expert_actions
         self.device = device
         self.size = len(expert_obs)
         
@@ -120,8 +127,6 @@ class ExpertDataset:
 
 
 class GAILTrainer:
-    """GAIL training coordinator that manages alternating discriminator and policy training."""
-    
     def __init__(self, config, discriminator, expert_dataset, policy_trainer_data):
         self.config = config
         self.discriminator = discriminator
@@ -153,7 +158,7 @@ class GAILTrainer:
     def train_discriminator(self, num_epochs=5):
         """Train discriminator to distinguish expert from policy data."""
         if len(self.policy_obs_buffer) < self.config.min_policy_data:
-            print(f"  Skipping discriminator training - insufficient policy data ({len(self.policy_obs_buffer)} < {self.config.min_policy_data})")
+            print(f"Skipping discriminator training - insufficient policy data ({len(self.policy_obs_buffer)} < {self.config.min_policy_data})")
             return
             
         # print(f"  Training discriminator for {num_epochs} epochs with {len(self.policy_obs_buffer)} policy samples...")
@@ -165,6 +170,8 @@ class GAILTrainer:
             # print(f"    Discriminator epoch {epoch + 1}/{num_epochs}")
             # Sample expert data
             expert_obs, expert_actions = self.expert_dataset.sample(self.config.discriminator_batch_size // 2)
+
+            print(f"discriminator buffer size: {self.expert_dataset.size}, policy buffer size: {len(self.policy_obs_buffer)}")
             
             # Sample policy data
             if len(self.policy_obs_buffer) >= self.config.discriminator_batch_size // 2:
@@ -245,21 +252,48 @@ def load_config(config_path):
 
 def load_expert_data(config, vecenv):
     """Load expert demonstrations for GAIL training."""
-    print("Generating expert demonstrations...")
     
-    # Generate expert data using the existing function
-    expert_obs, expert_actions, _, _, goal_rate, collision_rate = generate_state_action_pairs(
-        env=vecenv.env,
-        device=config.device,
-        action_space_type="discrete" if hasattr(vecenv.env, 'single_action_space') and hasattr(vecenv.env.single_action_space, 'n') else "continuous",
-        use_action_indices=True,
-        make_video=True,
-        render_index=[0, 1],
-        save_path="output/expert_vis_test1",
-    )
+    save_path = f"irl/data/puffer_{config.train.seed}"
+    trajectory_file = f"{save_path}/trajectory_0.npz"
+    global_file = f"{save_path}/global/global_trajectory_0.npz"
     
-    print(f"Expert data: {len(expert_obs)} transitions, Goal rate: {goal_rate:.3f}, Collision rate: {collision_rate:.3f}")
+    # Check if we should remake data or if data doesn't exist
+    remake_data = getattr(config, 'expertdata', {}).get('remake', False)
+    data_exists = os.path.exists(trajectory_file) and os.path.exists(global_file)
     
+    if remake_data or not data_exists:
+        if remake_data:
+            print("Remaking expert demonstrations (config.expertdata.remake=True)...")
+        else:
+            print("Expert data not found. Generating expert demonstrations...")
+            
+        save_trajectory(
+            env=vecenv.env,
+            save_path=save_path,
+            save_index=0,
+            action_space_type="discrete",
+            use_action_indices=True,
+            save_visualization=False,
+            render_index=[0, 2]
+        )
+    else:
+        print(f"Loading existing expert data from {save_path}...")
+    
+    # Load expert data
+    expert_data = np.load(trajectory_file)
+    expert_obs = expert_data["obs"]
+    expert_actions = expert_data["actions"]
+    
+    # Load expert global data(not used)
+    expert_global_data = np.load(global_file)
+    expert_global_pos = expert_global_data["ego_global_pos"]
+
+    collision = expert_data["veh_collision"]
+    off_road = expert_data["off_road"]
+    goal_achieved = expert_data["goal_achieved"]
+
+    print(f"Off-road rate: {off_road:.3f}, Vehicle collision rate: {collision:.3f}, Goal rate: {goal_achieved:.3f}, using non-collided trajectories")
+
     return expert_obs, expert_actions
 
 
@@ -309,7 +343,9 @@ def train_gail(args, vecenv):
     args.train.__dict__.update(dict(args.wandb.config.train))
 
     # Load expert data
-    expert_obs, expert_actions = load_expert_data(args.train, vecenv)
+    expert_obs, expert_actions = load_expert_data(args, vecenv)
+    expert_obs = torch.tensor(expert_obs).to(args.train.device)
+    expert_actions = torch.tensor(expert_actions).to(args.train.device)
     expert_dataset = ExpertDataset(expert_obs, expert_actions, device=args.train.device)
     
     # Create discriminator
@@ -317,10 +353,13 @@ def train_gail(args, vecenv):
     
     # Determine action space info
     if expert_actions.dim() == 1 and expert_actions.dtype in (torch.long, torch.int):
+        print("Expert in Discrete actions.")
         # Discrete actions - use number of unique actions as dimension
         num_action_classes = int(expert_actions.max().item()) + 1
         action_dim = num_action_classes  # For one-hot encoding
     else:
+        print("Expert in Continuous actions.")
+        print(f"expert_actions: {expert_actions.shape}")
         # Continuous actions or already processed
         action_dim = 1 if expert_actions.dim() == 1 else expert_actions.shape[-1]
         num_action_classes = None

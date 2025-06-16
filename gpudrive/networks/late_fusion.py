@@ -3,6 +3,7 @@ from typing import List, Union
 import torch
 from torch import nn
 from torch.distributions.utils import logits_to_probs
+from torch.distributions import Categorical, Normal
 import pufferlib.models
 from gpudrive.env import constants
 from huggingface_hub import PyTorchModelHubMixin
@@ -66,6 +67,35 @@ def sample_logits(
     return action.squeeze(0), logprob.squeeze(0), logits_entropy.squeeze(0)
 
 
+def sample_continuous_actions(
+    action_mean: torch.Tensor,
+    action_logstd: torch.Tensor,
+    action=None,
+    deterministic=False,
+):
+    """Sample continuous actions from a normal distribution."""
+    
+    if action is None:
+        if deterministic:
+            # Use the mean as the action
+            action = action_mean
+        else:
+            # Sample from normal distribution
+            std = torch.exp(action_logstd)
+            dist = Normal(action_mean, std)
+            action = dist.sample()
+    
+    # Calculate log probability
+    std = torch.exp(action_logstd)
+    dist = Normal(action_mean, std)
+    logprob = dist.log_prob(action).sum(dim=-1)
+    
+    # Calculate entropy
+    entropy = dist.entropy().sum(dim=-1)
+    
+    return action, logprob, entropy
+
+
 class NeuralNet(
     nn.Module,
     PyTorchModelHubMixin,
@@ -83,6 +113,7 @@ class NeuralNet(
         max_controlled_agents=64,
         obs_dim=2984,  # Size of the flattened observation vector (hardcoded)
         config=None,  # Optional config
+        continuous_actions=False,  # New parameter to specify action type
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -94,6 +125,7 @@ class NeuralNet(
         self.num_modes = 3  # Ego, partner, road graph
         self.dropout = dropout
         self.act_func = nn.Tanh() if act_func == "tanh" else nn.GELU()
+        self.continuous_actions = continuous_actions
 
         # Indices for unpacking the observation
         self.ego_state_idx = constants.EGO_FEAT_DIM
@@ -160,9 +192,21 @@ class NeuralNet(
             nn.Dropout(self.dropout),
         )
 
-        self.actor = pufferlib.pytorch.layer_init(
-            nn.Linear(hidden_dim, action_dim), std=0.01
-        )
+        if self.continuous_actions:
+            # For continuous actions, output mean and log_std
+            self.actor_mean = pufferlib.pytorch.layer_init(
+                nn.Linear(hidden_dim, action_dim), std=0.01
+            )
+            # Initialize log_std as a parameter (independent of state)
+            self.action_logstd = nn.Parameter(torch.zeros(1, action_dim))
+            print(f"Neural Network: Configured for CONTINUOUS actions (mean + log_std outputs)")
+        else:
+            # For discrete actions, output logits
+            self.actor = pufferlib.pytorch.layer_init(
+                nn.Linear(hidden_dim, action_dim), std=0.01
+            )
+            print(f"Neural Network: Configured for DISCRETE actions (logits output)")
+            
         self.critic = pufferlib.pytorch.layer_init(
             nn.Linear(hidden_dim, 1), std=1
         )
@@ -203,9 +247,18 @@ class NeuralNet(
 
         # Decode the actions
         value = self.critic(hidden)
-        logits = self.actor(hidden)
-
-        action, logprob, entropy = sample_logits(logits, action, deterministic)
+        
+        if self.continuous_actions:
+            # For continuous actions
+            action_mean = self.actor_mean(hidden)
+            action_logstd = self.action_logstd.expand_as(action_mean)
+            action, logprob, entropy = sample_continuous_actions(
+                action_mean, action_logstd, action, deterministic
+            )
+        else:
+            # For discrete actions
+            logits = self.actor(hidden)
+            action, logprob, entropy = sample_logits(logits, action, deterministic)
 
         return action, logprob, entropy, value
 

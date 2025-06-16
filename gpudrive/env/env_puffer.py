@@ -40,6 +40,7 @@ class PufferGPUDrive(PufferEnv):
         dynamics_model="classic",
         action_space_steer_disc=13,
         action_space_accel_disc=7,
+        action_type="discrete",
         ego_state=True,
         road_map_obs=True,
         partner_obs=True,
@@ -89,6 +90,7 @@ class PufferGPUDrive(PufferEnv):
         self.collision_weight = collision_weight
         self.off_road_weight = off_road_weight
         self.goal_achieved_weight = goal_achieved_weight
+        self.action_type = action_type
 
         self.render = render
         self.render_interval = render_interval
@@ -149,6 +151,7 @@ class PufferGPUDrive(PufferEnv):
             data_loader=data_loader,
             max_cont_agents=max_controlled_agents,
             device=device,
+            action_type=action_type,
         )
 
         self.obs_size = self.env.observation_space.shape[-1]
@@ -169,9 +172,21 @@ class PufferGPUDrive(PufferEnv):
         self.observations = self.env.reset(self.controlled_agent_mask)
 
         self.masks = torch.ones(self.num_agents, dtype=bool)
-        self.actions = torch.zeros(
-            (self.num_worlds, self.max_cont_agents_per_env), dtype=torch.int64
-        ).to(self.device)
+        
+        # Use appropriate dtype for actions based on action type
+        action_dtype = torch.float32 if action_type == "continuous" else torch.int64
+        if action_type == "continuous":
+            # For continuous actions, we have a single Box space with shape (3,)
+            action_dim = self.single_action_space.shape[0]  # Should be 3 for (accel/dx, steer/dy, head/dyaw)
+            self.actions = torch.zeros(
+                (self.num_worlds, self.max_cont_agents_per_env, action_dim), 
+                dtype=action_dtype
+            ).to(self.device)
+        else:
+            self.actions = torch.zeros(
+                (self.num_worlds, self.max_cont_agents_per_env), 
+                dtype=action_dtype
+            ).to(self.device)
 
         # Setup rendering storage
         self.rendering_in_progress = {
