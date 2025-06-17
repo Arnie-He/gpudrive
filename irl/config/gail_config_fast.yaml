@@ -10,7 +10,7 @@ continue_training: false
 model_cpt: null
 
 expertdata:
-  remake: true
+  remake: false
 
 environment:
   name: "gpudrive"
@@ -33,6 +33,7 @@ environment:
   polyline_reduction_threshold: 0.1
   sampling_seed: 42
   obs_radius: 50.0
+  action_type: "continuous"  # Action space type: "discrete" or "continuous"
   action_space_steer_disc: 13
   action_space_accel_disc: 7
   use_vbd: false
@@ -57,6 +58,14 @@ train:
   bptt_horizon: 1
   compile: false
   compile_mode: "reduce-overhead"
+  use_gradient_penalty: true
+  gradient_penalty_lambda: 10.0
+  grad_clip_norm: 1.0
+  disc_updates_per_policy_update: 1
+  visualize: false
+  vis_interval: 1000
+  vis_rollout_length: 100
+  vis_num_rollouts: 10
 
 
 
@@ -67,7 +76,7 @@ train:
   sample_with_replacement: true
   shuffle_dataset: false
 
-  # PPO - OPTIMIZED FOR GAIL
+  # PPO - OPTIMIZED FOR GAIL WITH BETTER EXPLORATION
   torch_deterministic: false
   total_timesteps: 100_000_000
   batch_size: 2048        # 8x smaller than original (131072 -> 16384)
@@ -81,27 +90,27 @@ train:
   clip_coef: 0.2
   clip_vloss: false
   vf_clip_coef: 0.2
-  ent_coef: 0.001         # Slightly increased for exploration
+  ent_coef: 0.01          # INCREASED from 0.001 to 0.01 for better exploration
   vf_coef: 0.3
   max_grad_norm: 0.5
   target_kl: null
   log_window: 1000
   
   # L2 Regularization
-  policy_weight_decay: 1e-4        # L2 regularization for policy network
-  value_weight_decay: 1e-4         # L2 regularization for value network
+  policy_weight_decay: 0.0001        # L2 regularization for policy network
+  value_weight_decay: 0.0001         # L2 regularization for value network
   
-  # GAIL - OPTIMIZED FOR SPEED
+  # GAIL - OPTIMIZED TO PREVENT DISCRIMINATOR OVERFITTING
   use_gail: true
-  discriminator_lr: 1e-3               # Slightly higher for faster learning
-  discriminator_hidden_dim: 128        # Smaller network for speed
-  discriminator_dropout: 0.1
-  discriminator_batch_size: 512        # Smaller batches for speed
-  discriminator_epochs: 3              # Reduced from 5 to 3
-  discriminator_update_freq: 1         # Update every policy update
+  discriminator_lr: 0.00003             # REDUCED from 0.001 to slow down discriminator learning
+  discriminator_hidden_dim: 64         # REDUCED from 128 to weaken discriminator
+  discriminator_dropout: 0.3           # INCREASED from 0.1 to 0.3 for more regularization
+  discriminator_batch_size: 256        # REDUCED from 512 to make training less stable
+  discriminator_epochs: 1              # REDUCED from 2 to 1 to prevent overfitting
+  discriminator_update_freq: 5         # INCREASED from 1 to 5 - update discriminator less frequently
   policy_buffer_size: 20000            # Smaller buffer for memory efficiency
-  min_policy_data: 512                 # Lower threshold to start training
-  discriminator_weight_decay: 1e-4     # L2 regularization for discriminator
+  min_policy_data: 1024                # INCREASED from 512 to accumulate more data before training
+  discriminator_weight_decay: 0.001    # INCREASED from 0.0001 for more regularization
   
   # Network architecture
   network:
@@ -117,9 +126,9 @@ train:
 
   # Rendering
   render: false # Determines whether to render the environment (note: will slow down training)
-  render_3d: true # Render simulator state in 3d or 2d
-  render_interval: 1 # Render every k iterations
-  render_k_scenarios: 10 # Number of scenarios to render
+  render_3d: false # Render simulator state in 3d or 2d
+  render_interval: 50 # Render every k iterations
+  render_k_scenarios: 3 # Number of scenarios to render
   render_format: "mp4" # Options: gif, mp4
   render_fps: 15 # Frames per second
   zoom_radius: 50

@@ -84,7 +84,8 @@ train:
   network:
     input_dim: 64 # Embedding of the input features
     hidden_dim: 128 # Latent dimension
-    dropout: 0.01
+    dropout: 0.0
+    using_shared_embedding: true  # Set to false for separate actor/critic embeddings
     class_name: "NeuralNet"
     num_parameters: 0 # Total trainable parameters, to be filled at runtime
 
@@ -94,9 +95,9 @@ train:
 
   # # # Rendering # # #
   render: false # Determines whether to render the environment (note: will slow down training)
-  render_3d: true # Render simulator state in 3d or 2d
-  render_interval: 1 # Render every k iterations
-  render_k_scenarios: 10 # Number of scenarios to render
+  render_3d: false # Render simulator state in 3d or 2d
+  render_interval: 50 # Render every k iterations
+  render_k_scenarios: 3 # Number of scenarios to render
   render_format: "mp4" # Options: gif, mp4
   render_fps: 15 # Frames per second
   zoom_radius: 50

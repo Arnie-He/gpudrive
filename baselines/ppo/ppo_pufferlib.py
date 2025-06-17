@@ -90,6 +90,9 @@ def make_agent(env, config):
             dropout=config.train.network.dropout,
             config=config.environment,
             continuous_actions=continuous_actions,
+            using_shared_embedding=config.train.network.using_shared_embedding,
+            action_low=env.single_action_space.low if continuous_actions else None,
+            action_high=env.single_action_space.high if continuous_actions else None,
         )
 
 

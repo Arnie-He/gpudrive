@@ -257,8 +257,17 @@ class PufferGPUDrive(PufferEnv):
         """
 
         # Set the action for the controlled agents
-        self.actions[self.controlled_agent_mask] = action
+        
 
+        # Clip actions to valid range for continuous action spaces
+        if self.action_type == "continuous":
+            # Get action space bounds
+            low = torch.tensor(self.single_action_space.low, device=self.device, dtype=torch.float32)
+            high = torch.tensor(self.single_action_space.high, device=self.device, dtype=torch.float32)
+            # Clip actions to valid range
+            action = torch.clamp(action, low, high)
+        
+        self.actions[self.controlled_agent_mask] = action
         # Step the simulator with controlled agents actions
         self.env.step_dynamics(self.actions)
 

@@ -189,6 +189,7 @@ def evaluate(data):
             #     reward[done_but_truncated] += config.gamma * terminal_value.squeeze(-1)
 
             # Add to rollout buffer
+            
             experience.store(
                 obs_device,
                 value,
@@ -241,6 +242,7 @@ def train(data):
         dones_np = experience.dones_np[idxs]
         values_np = experience.values_np[idxs]
         rewards_np = experience.rewards_np[idxs]
+        # print(f"rewards_np samples: {rewards_np[:10]}")
         advantages_np = compute_gae(
             dones_np, values_np, rewards_np, config.gamma, config.gae_lambda
         )
