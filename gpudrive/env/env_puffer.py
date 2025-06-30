@@ -163,9 +163,7 @@ class PufferGPUDrive(PufferEnv):
         # Number of controlled agents across all worlds
         self.num_agents = self.controlled_agent_mask.sum().item()
 
-        # This assigns a bunch of buffers to self.
-        # You can't use them because you want torch, not numpy
-        # So I am careful to assign these afterwards
+ 
         super().__init__()
 
         # Reset the environment and get the initial observations
@@ -258,7 +256,6 @@ class PufferGPUDrive(PufferEnv):
 
         # Set the action for the controlled agents
         
-
         # Clip actions to valid range for continuous action spaces
         if self.action_type == "continuous":
             # Get action space bounds
@@ -267,8 +264,13 @@ class PufferGPUDrive(PufferEnv):
             # Clip actions to valid range
             action = torch.clamp(action, low, high)
         
+        # if self.action_type == "continuous" and self.env.config.dynamics_model == "classic":
+        #     # give actions a third dimension to be 0
+        #     action = torch.cat([action, torch.zeros(action.shape[0], 1, device=self.device, dtype=torch.float32)], dim=1)
+        
         self.actions[self.controlled_agent_mask] = action
         # Step the simulator with controlled agents actions
+        
         self.env.step_dynamics(self.actions)
 
         # Get rewards, terminal (dones) and info

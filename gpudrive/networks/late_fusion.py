@@ -66,6 +66,24 @@ def sample_logits(
 
     return action.squeeze(0), logprob.squeeze(0), logits_entropy.squeeze(0)
 
+# def sample_continuous_actions(
+#     action_mean: torch.Tensor,
+#     action_logstd: torch.Tensor,
+#     action=None,
+#     deterministic=False,
+#     action_low=None,
+#     action_high=None,
+# ):
+#     """Sample continuous actions from a normal distribution with tanh squashing."""
+#     """return action, logprob, entropy"""
+#     std = torch.exp(action_logstd)
+#     dist = Normal(action_mean, std)
+#     if action is None:
+#         if deterministic:
+#             action = action_mean
+#         else:
+#             action = dist.sample()
+#     return action, dist.log_prob(action).sum(dim=-1), dist.entropy().sum(dim=-1)
 
 def sample_continuous_actions(
     action_mean: torch.Tensor,
@@ -76,13 +94,6 @@ def sample_continuous_actions(
     action_high=None,
 ):
     """Sample continuous actions from a normal distribution with tanh squashing."""
-    
-    # Default bounds if not provided
-    if action_low is None:
-        action_low = torch.tensor([-3.0] * action_mean.shape[-1], device=action_mean.device)
-    if action_high is None:
-        action_high = torch.tensor([3.0] * action_mean.shape[-1], device=action_mean.device)
-    
     # Ensure bounds are on the same device and broadcasted correctly
     action_low = action_low.to(action_mean.device)
     action_high = action_high.to(action_mean.device)
@@ -112,8 +123,8 @@ def sample_continuous_actions(
     std = torch.exp(action_logstd)
     dist = Normal(action_mean, std)
 
-    print(f"raw_action: {raw_action[:10]}")
-    print(f"action normalized: {action[:10]}")
+    # print(f"raw_action: {raw_action[:10]}")
+    # print(f"action normalized: {action[:10]}")
     
     # Log prob of raw action
     raw_logprob = dist.log_prob(raw_action).sum(dim=-1)
@@ -173,8 +184,7 @@ class NeuralNet(
                 self.action_high = torch.tensor(action_high, dtype=torch.float32)
             else:
                 # Default bounds if not provided
-                self.action_low = torch.tensor([-3.0] * action_dim, dtype=torch.float32)
-                self.action_high = torch.tensor([3.0] * action_dim, dtype=torch.float32)
+                raise ValueError("Action bounds must be provided for continuous actions")
         else:
             self.action_low = None
             self.action_high = None
@@ -471,7 +481,8 @@ class NeuralNet(
                 action_high = self.action_high.to(action_mean.device)
                 
                 action, logprob, entropy = sample_continuous_actions(
-                    action_mean, action_logstd, action, deterministic, action_low, action_high
+                    action_mean, action_logstd, action, deterministic,
+                    action_low, action_high
                 )
             else:
                 # For discrete actions

@@ -59,6 +59,7 @@ class GPUDriveTorchEnv(GPUDriveGymEnv):
         self.world_time_steps = torch.zeros(
             self.num_worlds, dtype=torch.short, device=self.device
         )
+        self.action_type = action_type
 
         # Initialize reward weights tensor if using reward_conditioned
         self.reward_weights_tensor = None
@@ -594,6 +595,9 @@ class GPUDriveTorchEnv(GPUDriveGymEnv):
 
     def step_dynamics(self, actions):
         if actions is not None:
+            if self.action_type == "continuous" and self.config.dynamics_model == "classic":
+                zeros = torch.zeros(actions.shape[0], actions.shape[1], 1, device=actions.device, dtype=actions.dtype)
+                actions = torch.cat([actions, zeros], dim=-1)
             self._apply_actions(actions)
         self.sim.step()
         not_done_worlds = ~self.get_dones().any(
@@ -714,6 +718,9 @@ class GPUDriveTorchEnv(GPUDriveGymEnv):
 
     def _set_continuous_action_space(self) -> None:
         """Configure the continuous action space."""
+        """For delta_local, the action space is (dx, dy, dyaw)"""
+        """For classic, the action space is (steer, accel)"""
+
         if self.config.dynamics_model == "delta_local":
             self.dx = self.config.dx.to(self.device)
             self.dy = self.config.dy.to(self.device)
@@ -721,22 +728,23 @@ class GPUDriveTorchEnv(GPUDriveGymEnv):
             action_1 = self.dx.clone().cpu().numpy()
             action_2 = self.dy.clone().cpu().numpy()
             action_3 = self.dyaw.clone().cpu().numpy()
-        elif self.config.dynamics_model == "classic":
+            low = np.array([action_1.min(), action_2.min(), action_3.min()])
+            high = np.array([action_1.max(), action_2.max(), action_3.max()])
+            action_space = Box(low=low, high=high, shape=(3,), dtype=np.float32)
+        elif self.config.dynamics_model == "classic" or self.config.dynamics_model == "bicycle":
             self.steer_actions = self.config.steer_actions.to(self.device)
             self.accel_actions = self.config.accel_actions.to(self.device)
-            self.head_actions = torch.tensor([0], device=self.device)
+            # self.head_actions = torch.tensor([0], device=self.device)
             action_1 = self.steer_actions.clone().cpu().numpy()
             action_2 = self.accel_actions.clone().cpu().numpy()
-            action_3 = self.head_actions.clone().cpu().numpy()
+            # action_3 = self.head_actions.clone().cpu().numpy()
+            low = np.array([action_1.min(), action_2.min()])
+            high = np.array([action_1.max(), action_2.max()])
+            action_space = Box(low=low, high=high, shape=(2,), dtype=np.float32)
         else:
             raise ValueError(
                 f"Continuous action space is currently not supported for dynamics_model: {self.config.dynamics_model}."
             )
-
-        # Create a single Box space instead of Tuple for PufferLib compatibility
-        low = np.array([action_1.min(), action_2.min(), action_3.min()])
-        high = np.array([action_1.max(), action_2.max(), action_3.max()])
-        action_space = Box(low=low, high=high, shape=(3,), dtype=np.float32)
         
         return action_space
 

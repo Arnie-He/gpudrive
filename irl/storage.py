@@ -179,7 +179,7 @@ def save_trajectory(env, save_path, action_space_type="discrete", use_action_ind
 
         # Visualize
         if save_visualization:
-            env_indices = list(range(render_index[0], render_index[1]))
+            env_indices = render_index
             if env_indices:  # Only render if there are environments to render
                 figs = env.vis.plot_simulator_state(
                     env_indices=env_indices,
@@ -263,10 +263,9 @@ if __name__ == "__main__":
     print(f"Using device: {config.train.device}")
 
     if config["train"]["resample_scenes"]:
-        if config["train"]["resample_scenes"]:
-            dataset_size = config["train"]["resample_dataset_size"]
+        dataset_size = config["train"]["resample_dataset_size"]
     else:
-        dataset_size = str(config["environment"]["k_unique_scenes"])
+        dataset_size = config["environment"]["k_unique_scenes"]
 
     # Create data loader
     train_loader = SceneDataLoader(
@@ -285,7 +284,6 @@ if __name__ == "__main__":
         data_loader=train_loader,
         **config.environment,
         **config.train,
-        action_type="discrete",  # Explicitly set action type to discrete
     )
 
     print('Launch Env')

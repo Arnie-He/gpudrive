@@ -108,7 +108,6 @@ def create(config, vecenv, policy, optimizer=None, wandb=None):
 
 @pufferlib.utils.profile
 def evaluate(data):
-
     # Sample new batch of scenarios before start of rollout
     if (
         data.config.resample_scenes
@@ -129,7 +128,6 @@ def evaluate(data):
 
     # Rollout loop
     while not experience.full:
-
         with profile.env:
             # Receive data from current timestep
             (
