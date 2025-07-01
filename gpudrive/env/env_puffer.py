@@ -17,6 +17,7 @@ from gpudrive.env.dataset import SceneDataLoader
 
 from pufferlib.environment import PufferEnv
 from gpudrive import GPU_DRIVE_DATA_DIR
+import imageio
 
 
 def env_creator(name="gpudrive", **kwargs):
@@ -301,6 +302,7 @@ class PufferGPUDrive(PufferEnv):
         self.episode_returns += reward_controlled
         self.episode_lengths += 1
 
+
         # Log off road and collision events
         info = self.env.get_infos()
         self.offroad_in_episode += info.off_road
@@ -327,9 +329,9 @@ class PufferGPUDrive(PufferEnv):
 
         info_lst = []
         if len(done_worlds) > 0:
-
             if self.render:
                 for render_env_idx in range(self.render_k_scenarios):
+                    print(f"frames[{render_env_idx}] length: {len(self.frames[render_env_idx])}")
                     self.log_video_to_wandb(render_env_idx, done_worlds)
 
             # Log episode statistics
@@ -436,13 +438,13 @@ class PufferGPUDrive(PufferEnv):
         - Only render env once per rollout
         """
         for render_env_idx in range(self.render_k_scenarios):
-            # Start a new rendering if the episode has just started
             if (self.iters - 1) % self.render_interval == 0:
                 if (
                     self.episode_lengths[render_env_idx, :][0] == 0
                     and not self.was_rendered_in_rollout[render_env_idx]
                 ):
                     self.rendering_in_progress[render_env_idx] = True
+                    print(f"starting a new rendering for env {render_env_idx}")
 
         envs_to_render = list(
             np.where(np.array(list(self.rendering_in_progress.values())))[0]
@@ -450,16 +452,20 @@ class PufferGPUDrive(PufferEnv):
         time_steps = list(self.episode_lengths[envs_to_render, 0])
 
         if len(envs_to_render) > 0:
+
+            print(f"envs_to_render: {envs_to_render}")
             sim_state_figures = self.env.vis.plot_simulator_state(
                 env_indices=envs_to_render,
                 time_steps=time_steps,
                 zoom_radius=self.zoom_radius,
             )
+            # check if sim_state_figures is empty
 
             for idx, render_env_idx in enumerate(envs_to_render):
                 self.frames[render_env_idx].append(
                     img_from_fig(sim_state_figures[idx])
                 )
+                print(f"frames[{render_env_idx}] length: {len(self.frames[render_env_idx])}")
 
     def resample_scenario_batch(self):
         """Sample and set new batch of WOMD scenarios."""
@@ -486,23 +492,36 @@ class PufferGPUDrive(PufferEnv):
             self.rendering_in_progress[env_idx] = False
             self.was_rendered_in_rollout[env_idx] = False
 
-    def log_video_to_wandb(self, render_env_idx, done_worlds):
-        """Log arrays as videos to wandb."""
+    def log_video_to_wandb(self, render_env_idx, done_worlds, save_to_local=True, local_path="videos"):
+        """Log arrays as videos to wandb and optionally save to local storage."""
+
+        print(f"Rendering env {render_env_idx} with {len(self.frames[render_env_idx])} frames")
         if (
             render_env_idx in done_worlds
             and len(self.frames[render_env_idx]) > 0
         ):
             frames_array = np.array(self.frames[render_env_idx])
-            self.wandb_obj.log(
-                {
-                    f"vis/state/env_{render_env_idx}": wandb.Video(
-                        np.moveaxis(frames_array, -1, 1),
-                        fps=self.render_fps,
-                        format=self.render_format,
-                        caption=f"global step: {self.global_step:,}",
-                    )
-                }
-            )
+            video_data = np.moveaxis(frames_array, -1, 1)
+
+            # Log to wandb
+            # self.wandb_obj.log(
+            #     {
+            #         f"vis/state/env_{render_env_idx}": wandb.Video(
+            #             video_data,
+            #             fps=self.render_fps,
+            #             format=self.render_format,
+            #             caption=f"global step: {self.global_step:,}",
+            #         )
+            #     }
+            # )
+
+            # Optionally save to local storage
+            if save_to_local:
+                os.makedirs(local_path, exist_ok=True)
+                video_file_path = os.path.join(local_path, f"env_{render_env_idx}_step_{self.global_step}.mp4")
+                imageio.mimsave(video_file_path, video_data, fps=self.render_fps)
+                print(f"Video saved to {video_file_path}")
+
             # Reset rendering storage
             self.frames[render_env_idx] = []
             self.rendering_in_progress[render_env_idx] = False
