@@ -66,6 +66,7 @@ class PufferGPUDrive(PufferEnv):
         render_format="mp4",
         render_fps=15,
         zoom_radius=50,
+        minimum_frames_to_log=50,
         buf=None,
         **kwargs,
     ):
@@ -97,6 +98,7 @@ class PufferGPUDrive(PufferEnv):
         self.render_format = render_format
         self.render_fps = render_fps
         self.zoom_radius = zoom_radius
+        self.minimum_frames_to_log = minimum_frames_to_log
 
         # VBD
         self.vbd_model_path = vbd_model_path
@@ -262,10 +264,28 @@ class PufferGPUDrive(PufferEnv):
 
         # Check if any worlds are done (terminal or truncated)
         controlled_per_world = self.controlled_agent_mask.sum(dim=1)
-        done_worlds = torch.where(
+        
+        # Worlds where all controlled agents are terminal
+        terminal_done_worlds = torch.where(
             (terminal * self.controlled_agent_mask).sum(dim=1)
             == controlled_per_world
         )[0]
+        
+        # Worlds where episodes have reached maximum length (truncated)
+        max_episode_length = self.env.episode_len
+        truncated_done_worlds = torch.where(
+            self.episode_lengths[:, 0] >= max_episode_length
+        )[0]
+        
+        # Combine both types of done worlds
+        if len(terminal_done_worlds) > 0 and len(truncated_done_worlds) > 0:
+            done_worlds = torch.unique(torch.cat([terminal_done_worlds, truncated_done_worlds]))
+        elif len(terminal_done_worlds) > 0:
+            done_worlds = terminal_done_worlds
+        elif len(truncated_done_worlds) > 0:
+            done_worlds = truncated_done_worlds
+        else:
+            done_worlds = torch.tensor([], dtype=torch.long, device=self.device)
         done_worlds_cpu = done_worlds.cpu().numpy()
 
         # Add rewards for living agents
@@ -300,11 +320,12 @@ class PufferGPUDrive(PufferEnv):
         terminal = terminal[self.controlled_agent_mask]
 
         info_lst = []
-        if len(done_worlds) > 0:
 
-            if self.render:
-                for render_env_idx in range(self.render_k_scenarios):
-                    self.log_video_to_wandb(render_env_idx, done_worlds)
+        if self.render:
+            for render_env_idx in range(self.render_k_scenarios):
+                self.log_video_to_wandb(render_env_idx, done_worlds)
+
+        if len(done_worlds) > 0:
 
             # Log episode statistics
             controlled_mask = self.controlled_agent_mask[
@@ -462,11 +483,14 @@ class PufferGPUDrive(PufferEnv):
 
     def log_video_to_wandb(self, render_env_idx, done_worlds):
         """Log arrays as videos to wandb."""
+        # if(len(self.frames[render_env_idx]) > 0):
+        #     print(f"iter: {self.iters}, render_env_idx: {render_env_idx}, frames length: {len(self.frames[render_env_idx])}, done_worlds: {done_worlds}")
         if (
-            render_env_idx in done_worlds
-            and len(self.frames[render_env_idx]) > 0
+            (render_env_idx in done_worlds and len(self.frames[render_env_idx]) > 0) or 
+            len(self.frames[render_env_idx]) > self.minimum_frames_to_log
         ):
             frames_array = np.array(self.frames[render_env_idx])
+            print(f"frames shape: {frames_array.shape}")
             self.wandb_obj.log(
                 {
                     f"vis/state/env_{render_env_idx}": wandb.Video(

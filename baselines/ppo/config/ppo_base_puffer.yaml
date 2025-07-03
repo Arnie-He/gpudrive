@@ -62,8 +62,8 @@ train:
   # # # PPO # # #
   torch_deterministic: false
   total_timesteps: 1_000_000_000
-  batch_size: 131_072
-  minibatch_size: 8192
+  batch_size: 32768
+  minibatch_size: 2048
   learning_rate: 3e-4
   anneal_lr: false
   gamma: 0.99
@@ -92,13 +92,14 @@ train:
   checkpoint_path: "./runs"
 
   # # # Rendering # # #
-  render: false # Determines whether to render the environment (note: will slow down training)
+  render: true # Determines whether to render the environment (note: will slow down training)
   render_3d: true # Render simulator state in 3d or 2d
-  render_interval: 1 # Render every k iterations
-  render_k_scenarios: 10 # Number of scenarios to render
+  render_interval: 50 # Render every k iterations
+  render_k_scenarios: 3 # Number of scenarios to render
   render_format: "mp4" # Options: gif, mp4
   render_fps: 15 # Frames per second
   zoom_radius: 50
+  minimum_frames_to_log: 50
 
 vec:
   backend: "native" # Only native is currently supported
