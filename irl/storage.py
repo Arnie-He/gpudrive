@@ -242,21 +242,25 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
-    parser.add_argument('--save_path', type=str, default='irl/data/full_version/processed')
+    parser.add_argument('--save_path', type=str, default='')
     parser.add_argument('--dataset', type=str, default='training', choices=['training', 'validation', 'testing'],)
     parser.add_argument('--function', type=str, default='save_trajectory', 
                         choices=['save_trajectory'])
     args = parser.parse_args()
+    # Load configuration
+    config = load_config(args.config)
+    config.environment.dynamics_model = "delta_local"
+
+    save_path = f"irl/data/puffer_{config.train.seed}"
+    trajectory_file = f"{save_path}/trajectory_0.npz"
+    global_file = f"{save_path}/global/global_trajectory_0.npz"
 
     torch.set_printoptions(precision=3, sci_mode=False)
-    save_path = os.path.join(args.save_path, f'{args.dataset}_subset_v2')
     print()
     print("save_path : ", save_path)
     print("dataset : ", args.dataset)
     print("function : ", args.function)
 
-    # Load configuration
-    config = load_config(args.config)
     
     # Set device
     config.train.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -292,7 +296,8 @@ if __name__ == "__main__":
         print(vecenv.env.data_batch)
         if args.function == 'save_trajectory':
             sv = True if i == 0 or i == num_iter - 1 else False
-            save_trajectory(vecenv.env, save_path, i * config.environment.num_worlds, save_visualization=sv)
+            # sv = False
+            save_trajectory(vecenv.env, save_path, i * config.environment.num_worlds, save_visualization=sv, render_index=list(range(2)))
         else:
             raise ValueError("Invalid function name")
         if i != num_iter - 1:

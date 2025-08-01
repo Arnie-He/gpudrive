@@ -10,7 +10,7 @@ environment: # Overrides default environment configs (see pygpudrive/env/config.
   name: "gpudrive"
   num_worlds: 75 # Number of parallel environments
   k_unique_scenes: 75 # Number of unique scenes to sample from
-  max_controlled_agents: 64 # Maximum number of agents controlled by the model. Make sure this aligns with the variable kMaxAgentCount in src/consts.hpp
+  max_controlled_agents: 1 
   ego_state: true
   road_map_obs: true
   partner_obs: true
@@ -47,8 +47,11 @@ wandb:
 gail:
   use_consecutive_obs: false
   discriminator_lr: 0.0001 # or should I use 1e-3?
-  data_batch_size: 32768
-  minibatch_size: 4096
+  # data_batch_size: 32768
+  # minibatch_size: 4096
+  data_batch_size: 4096
+  minibatch_size: 512
+
   discriminator_hidden_dim: 32
   discriminator_dropout: 0.0
   discriminator_use_input_norm: true
@@ -73,8 +76,10 @@ train:
   # # # PPO # # #
   torch_deterministic: false
   total_timesteps: 1_000_000_000
-  batch_size: 32768
-  minibatch_size: 2048
+  # batch_size: 32768
+  # minibatch_size: 2048
+  batch_size: 4096
+  minibatch_size: 512
   learning_rate: 3e-4
   anneal_lr: false
   gamma: 0.99
@@ -107,7 +112,7 @@ train:
   render: true # Determines whether to render the environment (note: will slow down training)
   render_3d: true # Render simulator state in 3d or 2d
   render_interval: 50 # Render every k iterations
-  render_k_scenarios: 3 # Number of scenarios to render
+  render_k_scenarios: 15 # Number of scenarios to render
   render_format: "mp4" # Options: gif, mp4
   render_fps: 15 # Frames per second
   zoom_radius: 50
