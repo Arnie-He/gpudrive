@@ -171,8 +171,11 @@ class PufferGPUDrive(PufferEnv):
         self.observations = self.env.reset(self.controlled_agent_mask)
 
         self.masks = torch.ones(self.num_agents, dtype=bool)
+        self.world_size = self.controlled_agent_mask.shape[1]
+        # Action tensor must match simulator's expected shape: (num_worlds, max_num_agents_in_scene)
+        # The simulator will only use actions for agents marked as controlled in cont_agent_mask
         self.actions = torch.zeros(
-            (self.num_worlds, self.max_cont_agents_per_env), dtype=torch.int64
+            (self.num_worlds, self.world_size), dtype=torch.int64
         ).to(self.device)
 
         # Setup rendering storage
@@ -213,22 +216,22 @@ class PufferGPUDrive(PufferEnv):
             self.num_agents, dtype=torch.float32
         ).to(self.device)
         self.agent_episode_returns = torch.zeros(
-            (self.num_worlds, self.max_cont_agents_per_env),
+            (self.num_worlds, self.world_size),
             dtype=torch.float32,
         ).to(self.device)
         self.episode_lengths = torch.zeros(
-            (self.num_worlds, self.max_cont_agents_per_env),
+            (self.num_worlds, self.world_size),
             dtype=torch.float32,
         ).to(self.device)
         self.live_agent_mask = torch.ones(
-            (self.num_worlds, self.max_cont_agents_per_env), dtype=bool
+            (self.num_worlds, self.world_size), dtype=bool
         ).to(self.device)
         self.collided_in_episode = torch.zeros(
-            (self.num_worlds, self.max_cont_agents_per_env),
+            (self.num_worlds, self.world_size),
             dtype=torch.float32,
         ).to(self.device)
         self.offroad_in_episode = torch.zeros(
-            (self.num_worlds, self.max_cont_agents_per_env),
+            (self.num_worlds, self.world_size),
             dtype=torch.float32,
         ).to(self.device)
 
@@ -240,20 +243,15 @@ class PufferGPUDrive(PufferEnv):
         asynchronously when they are done.
         Args:
             action: A numpy array of actions for the controlled agents. Shape:
-                (num_worlds, max_cont_agents_per_env)
+                (total_controlled_agents,) - will be mapped to controlled positions
+                in the (num_worlds, max_num_agents_in_scene) action tensor
         """
 
         # Set the action for the controlled agents
-        # only set the actions for the first max_cont_agents_per_env agents
-        # print(self.controlled_agent_mask)
-        # print(self.actions.shape)
-        # print(self.controlled_agent_mask.shape)
-        # print(action.shape)
-        # self.actions[self.controlled_agent_mask] = action
-        if action.ndim == 1:
-            self.actions = action.unsqueeze(dim=1)
-        else:
-            self.actions = action
+        print(f"action shape: {action.shape}")
+        print(f"self.controlled_agent_mask shape: {self.controlled_agent_mask.shape}")
+        print(f"total controlled agents: {self.controlled_agent_mask.sum().item()}")
+        self.actions[self.controlled_agent_mask] = action
 
         # Step the simulator with controlled agents actions
         self.env.step_dynamics(self.actions)
@@ -266,10 +264,7 @@ class PufferGPUDrive(PufferEnv):
             world_time_steps=self.episode_lengths[:, 0].long(),
         )
         # Flatten rewards; only keep rewards for controlled agents
-        # print(f"reward shape: {reward.shape}")
-        # print(f"controlled_agent_mask shape: {self.controlled_agent_mask.shape}")
         reward_controlled = reward[self.controlled_agent_mask]
-        # print(f"reward_controlled shape: {reward_controlled.shape}")
         terminal = self.env.get_dones().bool()
 
         self.render_env() if self.render else None
@@ -301,8 +296,7 @@ class PufferGPUDrive(PufferEnv):
         done_worlds_cpu = done_worlds.cpu().numpy()
 
         # Add rewards for living agents
-        reward_2d = reward_controlled.reshape(self.num_worlds, self.max_cont_agents_per_env)
-        self.agent_episode_returns[self.live_agent_mask] += reward_2d[
+        self.agent_episode_returns[self.live_agent_mask] += reward[
             self.live_agent_mask
         ]
         self.episode_returns += reward_controlled
@@ -310,20 +304,15 @@ class PufferGPUDrive(PufferEnv):
 
         # Log off road and collision events
         info = self.env.get_infos()
-        # print(f"info.off_road shape: {info.off_road[self.controlled_agent_mask].shape}")
-        # print(f"info.collided shape: {info.collided[self.controlled_agent_mask].shape}")
-        self.offroad_in_episode += info.off_road[self.controlled_agent_mask].reshape(self.num_worlds, self.max_cont_agents_per_env)
-        self.collided_in_episode += info.collided[self.controlled_agent_mask].reshape(self.num_worlds, self.max_cont_agents_per_env)
+        self.offroad_in_episode += info.off_road
+        self.collided_in_episode += info.collided
 
-        # Mask used for buffer - flatten the 2D live_agent_mask to 1D for controlled agents
-        # print(f"self.live_agent_mask shape: {self.live_agent_mask.shape}")
-        # print(f"self.masks shape: {self.masks.shape}")
-        self.masks = self.live_agent_mask.flatten()
+        # Mask used for buffer
+        self.masks = self.live_agent_mask[self.controlled_agent_mask]
 
         # Set the mask to False for _agents_ that are terminated for the next step
-        # Extract terminal status for controlled agents only and reshape to match live_agent_mask
-        controlled_terminal = terminal[self.controlled_agent_mask].reshape(self.num_worlds, self.max_cont_agents_per_env)
-        self.live_agent_mask[controlled_terminal] = False
+        # Shape: (num_worlds, world_size)
+        self.live_agent_mask[terminal] = 0
 
         # Truncated is defined as not crashed nor goal achieved
         truncated = torch.logical_and(
@@ -352,10 +341,16 @@ class PufferGPUDrive(PufferEnv):
 
             num_finished_agents = controlled_mask.sum().item()
 
+
+            print(f"self.offroad_in_episode shape: {self.offroad_in_episode.shape}")
+            print(f"self.collided_in_episode shape: {self.collided_in_episode.shape}")
+            print(f"self.env.get_infos().goal_achieved shape: {self.env.get_infos().goal_achieved.shape}")
+            print(f"self.env.get_infos().goal_achieved.bool().sum() / self.num_agents: {self.env.get_infos().goal_achieved[done_worlds, :][controlled_mask].sum() / num_finished_agents}")
+
             # Collision rates are summed across all agents in the episode
             off_road_rate = (
                 torch.where(
-                    self.offroad_in_episode[done_worlds, :]
+                    self.offroad_in_episode[done_worlds, :][controlled_mask]
                     > 0,
                     1,
                     0,
@@ -364,7 +359,7 @@ class PufferGPUDrive(PufferEnv):
             )
             collision_rate = (
                 torch.where(
-                    self.collided_in_episode[done_worlds, :]
+                    self.collided_in_episode[done_worlds, :][controlled_mask]
                     > 0,
                     1,
                     0,
@@ -373,7 +368,7 @@ class PufferGPUDrive(PufferEnv):
             )
             goal_achieved_rate = (
                 self.env.get_infos()
-                .goal_achieved[done_worlds, :]
+                .goal_achieved[done_worlds, :][controlled_mask]
                 .sum()
                 / num_finished_agents
             )
@@ -381,7 +376,9 @@ class PufferGPUDrive(PufferEnv):
             total_collisions = self.collided_in_episode[done_worlds, :].sum()
             total_off_road = self.offroad_in_episode[done_worlds, :].sum()
 
-            agent_episode_returns = self.agent_episode_returns[done_worlds, :]  
+            agent_episode_returns = self.agent_episode_returns[done_worlds, :][
+                controlled_mask
+            ]
 
             num_truncated = (
                 truncated[done_worlds, :][controlled_mask].sum().item()
@@ -414,8 +411,11 @@ class PufferGPUDrive(PufferEnv):
             self.episode_returns[done_worlds] = 0
             self.agent_episode_returns[done_worlds, :] = 0
             self.episode_lengths[done_worlds, :] = 0
-            # Reset the live agent mask so that all controlled agents are alive after reset
-            self.live_agent_mask[done_worlds] = True
+            # Reset the live agent mask so that the next alive mask will mark
+            # all agents as alive for the next step
+            self.live_agent_mask[done_worlds] = self.controlled_agent_mask[
+                done_worlds
+            ]
             self.offroad_in_episode[done_worlds, :] = 0
             self.collided_in_episode[done_worlds, :] = 0
 

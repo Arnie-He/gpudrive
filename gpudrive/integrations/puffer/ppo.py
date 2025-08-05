@@ -205,7 +205,6 @@ def evaluate(data):
 
     with profile.eval_misc:
         data.stats = {}
-
         # Store the average across K done worlds across last N rollouts
         # ensure we are logging an unbiased estimate of the performance
         if sum(data.infos["num_completed_episodes"]) > data.config.log_window:
