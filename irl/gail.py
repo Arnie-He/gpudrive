@@ -93,7 +93,7 @@ def make_agent(env, config):
 def load_expert_data(config, vecenv):
     """Load expert demonstrations for GAIL training."""
     
-    save_path = f"irl/data/puffer_{config.train.seed}"
+    save_path = f"irl/data/puffer_{config.train.seed}_{config.environment.max_controlled_agents}"
     trajectory_file = f"{save_path}/trajectory_0.npz"
     global_file = f"{save_path}/global/global_trajectory_0.npz"
     
@@ -303,6 +303,9 @@ def train(args, vecenv):
         try:
             ppo.evaluate(data)  # Rollout
             obs_data = data.experience.obs[:data.experience.ptr]
+            # # sample batch_size from obs_data
+            # if(obs_data.shape[0] > args.gail.data_batch_size):
+            #     obs_data = obs_data[torch.randperm(obs_data.shape[0])[:args.gail.data_batch_size]]
             expert_data = expert_dataset.next_iter()
             # print(f"obs_data shape: {obs_data.shape}, expert_data shape: {expert_data.shape}")
             if(args.gail.use_consecutive_obs):
@@ -406,6 +409,7 @@ def run(
     obs_radius: Annotated[Optional[float], typer.Option(help="The radius for the observation")] = None,
     collision_behavior: Annotated[Optional[str], typer.Option(help="The collision behavior; 'ignore' or 'remove'")] = None,
     remove_non_vehicles: Annotated[Optional[int], typer.Option(help="Remove non-vehicles from the scene; 0 or 1")] = None,
+    max_controlled_agents: Annotated[Optional[int], typer.Option(help="Maximum number of controlled agents")] = None,
     # action_type: Annotated[Optional[str], typer.Option(help="Action space type; 'discrete' or 'continuous'")] = None,
     use_vbd: Annotated[Optional[bool], typer.Option(help="Use VBD model for trajectory predictions")] = False,
     vbd_model_path: Annotated[Optional[str], typer.Option(help="Path to VBD model checkpoint")] = None,
@@ -454,6 +458,7 @@ def run(
         "remove_non_vehicles": None
         if remove_non_vehicles is None
         else bool(remove_non_vehicles),
+        "max_controlled_agents": max_controlled_agents,
         # "action_type": action_type,
         "use_vbd": use_vbd,
         "vbd_model_path": vbd_model_path,

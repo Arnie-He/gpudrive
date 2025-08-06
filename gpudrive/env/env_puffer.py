@@ -526,8 +526,8 @@ class PufferGPUDrive(PufferEnv):
         # if(len(self.frames[render_env_idx]) > 0):
         #     print(f"iter: {self.iters}, render_env_idx: {render_env_idx}, frames length: {len(self.frames[render_env_idx])}, done_worlds: {done_worlds}")
         if (
-            (render_env_idx in done_worlds and len(self.frames[render_env_idx]) > 0) or 
-            len(self.frames[render_env_idx]) > self.minimum_frames_to_log
+            (render_env_idx in done_worlds and len(self.frames[render_env_idx]) > 0) 
+            or len(self.frames[render_env_idx]) > self.minimum_frames_to_log
         ):
             frames_array = np.array(self.frames[render_env_idx])
             # print(f"frames shape: {frames_array.shape}")

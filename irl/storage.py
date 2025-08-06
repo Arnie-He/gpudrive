@@ -246,12 +246,15 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='training', choices=['training', 'validation', 'testing'],)
     parser.add_argument('--function', type=str, default='save_trajectory', 
                         choices=['save_trajectory'])
+    parser.add_argument('--maxagents', type=int, default=1)
+
     args = parser.parse_args()
     # Load configuration
     config = load_config(args.config)
     config.environment.dynamics_model = "delta_local"
+    config.environment.max_controlled_agents = args.maxagents
 
-    save_path = f"irl/data/puffer_{config.train.seed}"
+    save_path = f"irl/data/puffer_{config.train.seed}_{config.environment.max_controlled_agents}"
     trajectory_file = f"{save_path}/trajectory_0.npz"
     global_file = f"{save_path}/global/global_trajectory_0.npz"
 
