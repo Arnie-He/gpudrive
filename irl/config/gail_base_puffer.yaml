@@ -39,7 +39,7 @@ environment: # Overrides default environment configs (see pygpudrive/env/config.
 
 wandb:
   entity: "rl-power"
-  project: "gpudrive"
+  project: "gpudrive-gail"
   group: "test"
   mode: "online" # Options: online, offline, disabled
   tags: ["gail", "ff"]
@@ -93,7 +93,7 @@ train:
   vf_coef: 0.3
   max_grad_norm: 0.5
   target_kl: null
-  log_window: 1000
+  log_window: 10
 
   # # # Network # # #
   network:

@@ -235,7 +235,45 @@ class PufferGPUDrive(PufferEnv):
             dtype=torch.float32,
         ).to(self.device)
 
+        self.initialize_tracking()
+
         return self.observations, []
+
+    def initialize_tracking(self):
+        self.done_or_truncated_worlds = torch.zeros(self.num_worlds, dtype=torch.int32).to(self.device)
+        self.goal_achieved_mask = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.int32
+        ).to(self.device)
+        self.collided_mask = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.int32
+        ).to(self.device)
+        self.offroad_mask = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.int32
+        ).to(self.device)
+        self.truncated_mask = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.int32
+        ).to(self.device)
+        self.reward_agent = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.float32
+        ).to(self.device)
+        self.episode_length_agent = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.float32
+        ).to(self.device)
+        self.total_offroad_count = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.int32
+        ).to(self.device)
+        self.total_collided_count = torch.zeros(
+            (self.num_worlds, self.world_size),
+            dtype=torch.int32
+        ).to(self.device)
+
 
     def step(self, action):
         """
@@ -248,9 +286,9 @@ class PufferGPUDrive(PufferEnv):
         """
 
         # Set the action for the controlled agents
-        print(f"action shape: {action.shape}")
-        print(f"self.controlled_agent_mask shape: {self.controlled_agent_mask.shape}")
-        print(f"total controlled agents: {self.controlled_agent_mask.sum().item()}")
+        # print(f"action shape: {action.shape}")
+        # print(f"self.controlled_agent_mask shape: {self.controlled_agent_mask.shape}")
+        # print(f"total controlled agents: {self.controlled_agent_mask.sum().item()}")
         self.actions[self.controlled_agent_mask] = action
 
         # Step the simulator with controlled agents actions
@@ -332,77 +370,36 @@ class PufferGPUDrive(PufferEnv):
             for render_env_idx in range(self.render_k_scenarios):
                 self.log_video_to_wandb(render_env_idx, done_worlds)
 
-        if len(done_worlds) > 0:
-
-            # Log episode statistics
-            controlled_mask = self.controlled_agent_mask[
-                done_worlds, :
-            ].clone()
-
-            num_finished_agents = controlled_mask.sum().item()
-
-
-            print(f"self.offroad_in_episode shape: {self.offroad_in_episode.shape}")
-            print(f"self.collided_in_episode shape: {self.collided_in_episode.shape}")
-            print(f"self.env.get_infos().goal_achieved shape: {self.env.get_infos().goal_achieved.shape}")
-            print(f"self.env.get_infos().goal_achieved.bool().sum() / self.num_agents: {self.env.get_infos().goal_achieved[done_worlds, :][controlled_mask].sum() / num_finished_agents}")
-
-            # Collision rates are summed across all agents in the episode
-            off_road_rate = (
-                torch.where(
-                    self.offroad_in_episode[done_worlds, :][controlled_mask]
-                    > 0,
-                    1,
-                    0,
-                ).sum()
-                / num_finished_agents
+        if(len(done_worlds) > 0):
+            self.done_or_truncated_worlds[done_worlds] = 1
+            done_world_mask = torch.zeros_like(self.controlled_agent_mask, dtype=torch.bool)
+            done_world_mask[done_worlds, :] = True
+            combined_mask = done_world_mask & self.controlled_agent_mask
+            
+            # Now use the combined mask for proper assignment
+            self.goal_achieved_mask[combined_mask] = torch.where(
+                self.env.get_infos().goal_achieved[combined_mask].to(torch.int32) > 0,
+                torch.tensor(1, dtype=torch.int32),
+                torch.tensor(0, dtype=torch.int32),
             )
-            collision_rate = (
-                torch.where(
-                    self.collided_in_episode[done_worlds, :][controlled_mask]
-                    > 0,
-                    1,
-                    0,
-                ).sum()
-                / num_finished_agents
+            self.collided_mask[combined_mask] = torch.where(
+                self.collided_in_episode[combined_mask].to(torch.int32) > 0,
+                torch.tensor(1, dtype=torch.int32), 
+                torch.tensor(0, dtype=torch.int32),
             )
-            goal_achieved_rate = (
-                self.env.get_infos()
-                .goal_achieved[done_worlds, :][controlled_mask]
-                .sum()
-                / num_finished_agents
+            self.offroad_mask[combined_mask] = torch.where(
+                self.offroad_in_episode[combined_mask].to(torch.int32) > 0,
+                torch.tensor(1, dtype=torch.int32), 
+                torch.tensor(0, dtype=torch.int32),
             )
+            self.total_collided_count[combined_mask] = self.collided_in_episode[combined_mask].sum().to(torch.int32)
+            self.total_offroad_count[combined_mask] = self.offroad_in_episode[combined_mask].sum().to(torch.int32)
+            
+            self.truncated_mask[combined_mask] = truncated[combined_mask].to(torch.int32)
+            self.reward_agent[combined_mask] = self.agent_episode_returns[combined_mask]
+            self.episode_length_agent[combined_mask] = self.episode_lengths[combined_mask]
 
-            total_collisions = self.collided_in_episode[done_worlds, :].sum()
-            total_off_road = self.offroad_in_episode[done_worlds, :].sum()
-
-            agent_episode_returns = self.agent_episode_returns[done_worlds, :][
-                controlled_mask
-            ]
-
-            num_truncated = (
-                truncated[done_worlds, :][controlled_mask].sum().item()
-            )
-
-            if num_finished_agents > 0:
-                # fmt: off
-                info_lst.append(
-                    {
-                        "mean_episode_reward_per_agent": agent_episode_returns.mean().item(),
-                        "perc_goal_achieved": goal_achieved_rate.item(),
-                        "perc_off_road": off_road_rate.item(),
-                        "perc_veh_collisions": collision_rate.item(),
-                        "total_controlled_agents": self.num_agents,
-                        "control_density": self.num_agents / self.controlled_agent_mask.numel(),
-                        "episode_length": self.episode_lengths[done_worlds, :].mean().item(),
-                        "perc_truncated": num_truncated / num_finished_agents,
-                        "num_completed_episodes": len(done_worlds),
-                        "total_collisions": total_collisions.item(),
-                        "total_off_road": total_off_road.item(),
-                    }
-                )
-                # fmt: on
-
+            # reset the done_worlds
             # Get obs for the last terminal step (before reset)
             self.last_obs = self.env.get_obs(self.controlled_agent_mask)
 
@@ -418,6 +415,36 @@ class PufferGPUDrive(PufferEnv):
             ]
             self.offroad_in_episode[done_worlds, :] = 0
             self.collided_in_episode[done_worlds, :] = 0
+            
+        if(self.done_or_truncated_worlds.sum().item() == self.num_worlds):
+            # we have finished all synced worlds, now we can log the data
+            goal_achieved_rate = self.goal_achieved_mask.sum() / self.num_agents
+            off_road_rate = self.offroad_mask.sum() / self.num_agents
+            collision_rate = self.collided_mask.sum() / self.num_agents
+            truncated_rate = self.truncated_mask.sum() / self.num_agents
+            crashed = self.collided_mask | self.offroad_mask
+            crashed_rate = crashed.sum() / self.num_agents
+            mean_episode_reward = self.reward_agent.sum() / self.num_agents
+            
+            # print(f"mean episode reward per agent: {mean_episode_reward.item()}")
+            # print(f"goal_achieved_rate: {goal_achieved_rate.item()}, off_road_rate: {off_road_rate.item()}, collision_rate: {collision_rate.item()}, truncated_rate: {truncated_rate.item()}, PercentCrashedorGoalAchievedorTruncated: {goal_achieved_rate.item() + crashed_rate.item() + truncated_rate.item()}")
+
+            info_lst.append(
+                {
+                    "perc_goal_achieved": goal_achieved_rate.item(),
+                    "perc_crashed(collided or offroad)": crashed_rate.item(),
+                    "perc_off_road": off_road_rate.item(),
+                    "perc_veh_collisions": collision_rate.item(),
+                    "perc_truncated": truncated_rate.item(),
+                    "mean_episode_reward_per_agent": mean_episode_reward.item(),
+                    "episode_length": self.episode_length_agent.mean().item(),
+                    "total_offroad_count": self.total_offroad_count.sum().item(),
+                    "total_collided_count": self.total_collided_count.sum().item(),
+                }
+            )
+
+            # reset the tracking variables
+            self.initialize_tracking()
 
         # Get the next observations. Note that we do this after resetting
         # the worlds so that we always return a fresh observation
@@ -503,7 +530,7 @@ class PufferGPUDrive(PufferEnv):
             len(self.frames[render_env_idx]) > self.minimum_frames_to_log
         ):
             frames_array = np.array(self.frames[render_env_idx])
-            print(f"frames shape: {frames_array.shape}")
+            # print(f"frames shape: {frames_array.shape}")
             self.wandb_obj.log(
                 {
                     f"vis/state/env_{render_env_idx}": wandb.Video(
