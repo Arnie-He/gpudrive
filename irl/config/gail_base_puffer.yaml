@@ -11,6 +11,7 @@ environment: # Overrides default environment configs (see pygpudrive/env/config.
   num_worlds: 75 # Number of parallel environments
   k_unique_scenes: 75 # Number of unique scenes to sample from
   max_controlled_agents: 1 
+  max_num_agents_in_scene: 64
   ego_state: true
   road_map_obs: true
   partner_obs: true
@@ -27,6 +28,7 @@ environment: # Overrides default environment configs (see pygpudrive/env/config.
   polyline_reduction_threshold: 0.1 # Rate at which to sample points from the polyline (0 is use all closest points, 1 maximum sparsity), needs to be balanced with kMaxAgentMapObservationsCount
   sampling_seed: 42 # If given, the set of scenes to sample from will be deterministic, if None, the set of scenes will be random
   obs_radius: 50.0 # Visibility radius of the agents
+  road_obs_algorithm: "linear" # Algorithm for road observations: "linear" or "k_nearest_roadpoints"
   # action_type: "discrete" # Action space type: "discrete" or "continuous"
   action_space_steer_disc: 13
   action_space_accel_disc: 7
@@ -36,6 +38,7 @@ environment: # Overrides default environment configs (see pygpudrive/env/config.
   init_steps: 11
   vbd_trajectory_weight: 0.1 # Importance of distance to the vbd trajectories in the reward function
   vbd_in_obs: false
+  init_mode: all_non_trivial
 
 wandb:
   entity: "rl-power"
@@ -44,21 +47,35 @@ wandb:
   mode: "online" # Options: online, offline, disabled
   tags: ["gail", "ff"]
 
-gail:
+gail: # discriminator configs
+  test_vanilla_ppo: false
+  
   use_consecutive_obs: false
-  discriminator_lr: 0.0001 # or should I use 1e-3?
+  discriminator_lr: 0.000005 # or should I use 1e-3?
   # data_batch_size: 32768
   # minibatch_size: 4096
-  data_batch_size: 4096
-  minibatch_size: 512
-
-  discriminator_hidden_dim: 32
-  discriminator_dropout: 0.0
-  discriminator_use_input_norm: true
+  data_batch_size: 4096 # to be filled in at runtime
+  num_minibatches: 8
+  use_full_dataset: true
+  discriminator_hidden_dim: 64
+  discriminator_dropout: 0.01
+  discriminator_wd: 0.001
+  discriminator_use_input_norm: false
   evaluate_discriminator_every: 10
 
-train:
+  reward_type: "airl"
+  
+  # Expert data generation options
+  use_action: true
+  use_generated_expert: true  # If true, use pretrained policy to generate expert trajectories; if false, use true expert data
+  pretrained_model_name: "daphne-cornelisse/policy_S10_000_02_27"  # Hugging Face model name for pretrained policy
+  expert_trajectory_batch_size: 32768
+  expert_deterministic: false  # Whether to use deterministic policy for expert generation
+
+train: # ppo configs
   exp_id: gail # Set dynamically in the script if needed
+  save_model_every: 1000
+  save_model_path: "irl/models"
   seed: 42
   cpu_offload: false
   device: "cuda"  # Dynamically set to cuda if available, else cpu
@@ -75,17 +92,19 @@ train:
 
   # # # PPO # # #
   torch_deterministic: false
-  total_timesteps: 1_000_000_000
+  total_timesteps: 50_000_000_000
   batch_size: 32768
-  minibatch_size: 2048
+  num_minibatches: 64 # to be filled in at runtime
+  minibatch_size: 1
   # batch_size: 4096
   # minibatch_size: 512
   learning_rate: 3e-4
+  rl_weight_decay: 0.0 # seems like no weight decay is better for GAIL
   anneal_lr: false
   gamma: 0.99
   gae_lambda: 0.95
   update_epochs: 4
-  norm_adv: true
+  norm_adv: true 
   clip_coef: 0.2
   clip_vloss: false
   vf_clip_coef: 0.2
@@ -109,7 +128,7 @@ train:
   checkpoint_path: "./runs"
 
   # # # Rendering # # #
-  render: true # Determines whether to render the environment (note: will slow down training)
+  render: false # Determines whether to render the environment (note: will slow down training)
   render_3d: true # Render simulator state in 3d or 2d
   render_interval: 50 # Render every k iterations
   render_k_scenarios: 15 # Number of scenarios to render

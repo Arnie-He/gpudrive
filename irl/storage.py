@@ -164,9 +164,9 @@ def save_trajectory(env, save_path, action_space_type="discrete", use_action_ind
         # partner_mask = env.get_partner_mask()
         # partner_id = env.get_partner_id().unsqueeze(-1)
         agent_info = (
-        env.sim.absolute_self_observation_tensor()
-        .to_torch()
-        .to(device)
+            env.sim.absolute_self_observation_tensor()
+            .to_torch()
+            .to(device)
         )
         infos = env.get_infos()
         

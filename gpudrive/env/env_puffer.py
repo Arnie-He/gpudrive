@@ -425,6 +425,9 @@ class PufferGPUDrive(PufferEnv):
             crashed = self.collided_mask | self.offroad_mask
             crashed_rate = crashed.sum() / self.num_agents
             mean_episode_reward = self.reward_agent.sum() / self.num_agents
+            # goal reaching without crashing
+            goal_wo_crash = self.goal_achieved_mask & ~crashed
+            goal_wo_crash_rate = goal_wo_crash.sum() / self.num_agents
             
             # print(f"mean episode reward per agent: {mean_episode_reward.item()}")
             # print(f"goal_achieved_rate: {goal_achieved_rate.item()}, off_road_rate: {off_road_rate.item()}, collision_rate: {collision_rate.item()}, truncated_rate: {truncated_rate.item()}, PercentCrashedorGoalAchievedorTruncated: {goal_achieved_rate.item() + crashed_rate.item() + truncated_rate.item()}")
@@ -432,6 +435,7 @@ class PufferGPUDrive(PufferEnv):
             info_lst.append(
                 {
                     "perc_goal_achieved": goal_achieved_rate.item(),
+                    "perc_goal_wo_crash_rate": goal_wo_crash_rate.item(),
                     "perc_crashed(collided or offroad)": crashed_rate.item(),
                     "perc_off_road": off_road_rate.item(),
                     "perc_veh_collisions": collision_rate.item(),

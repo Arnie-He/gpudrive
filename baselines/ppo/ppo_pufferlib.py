@@ -89,9 +89,6 @@ def train(args, vecenv):
     args.train.network.num_parameters = get_model_parameters(policy)
     args.train.env = args.environment.name
 
-    args.wandb = init_wandb(args, args.train.exp_id, id=args.train.exp_id)
-    args.train.__dict__.update(dict(args.wandb.config.train))
-
     data = ppo.create(args.train, vecenv, policy, wandb=args.wandb)
     while data.global_step < args.train.total_timesteps:
         try:
@@ -130,7 +127,7 @@ def init_wandb(args, name, id=None, resume=True):
     return wandb
 
 
-def sweep(args, project="PPO", sweep_name="my_sweep"):
+def sweep(args, vecenv, project="gpudrive-gail", sweep_name="1agent_ppo_expert_sweep"):
     """Initialize a WandB sweep with hyperparameters."""
     sweep_id = wandb.sweep(
         sweep=dict(
@@ -138,18 +135,19 @@ def sweep(args, project="PPO", sweep_name="my_sweep"):
             name=sweep_name,
             metric={"goal": "maximize", "name": "environment/episode_return"},
             parameters={
-                "learning_rate": {
+                "gail.discriminator_lr": {
                     "distribution": "log_uniform_values",
                     "min": 1e-4,
                     "max": 1e-1,
                 },
-                "batch_size": {"values": [512, 1024, 2048]},
-                "minibatch_size": {"values": [128, 256, 512]},
+                "gail.use_action": {"values": [True, False]},
+                "gail.hidden_dim": {"values": [16, 32, 64]},
+                "train.batch_size": {"values": [16384, 32768, 65536]},
             },
         ),
         project=project,
     )
-    wandb.agent(sweep_id, lambda: train(args), count=100)
+    wandb.agent(sweep_id, lambda: train(args, vecenv), count=100)
 
 
 @app.command()
@@ -194,6 +192,9 @@ def run(
     entity: Annotated[Optional[str], typer.Option(help="WandB entity name")] = None,
     group: Annotated[Optional[str], typer.Option(help="WandB group name")] = None,
     render: Annotated[Optional[int], typer.Option(help="Whether to render the environment; 0 or 1")] = None,
+
+    sweep: Annotated[Optional[int], typer.Option(help="Whether to run a sweep; 0 or 1")] = None,
+    save_model_every: Annotated[Optional[int], typer.Option(help="The frequency to save the model")] = None,
 ):
     """Run PPO training with the given configuration."""
     # fmt: on
@@ -220,6 +221,7 @@ def run(
         "vbd_trajectory_weight": vbd_trajectory_weight,
         "vbd_in_obs": vbd_in_obs,
         "init_steps": init_steps,
+        "save_model_every": save_model_every,
     }
     config.environment.update(
         {k: v for k, v in env_config.items() if v is not None}
@@ -242,6 +244,7 @@ def run(
         "render": None if render is None else bool(render),
         "gamma": gamma,
         "vf_coef": vf_coef,
+        
     }
     config.train.update(
         {k: v for k, v in train_config.items() if v is not None}
@@ -301,7 +304,13 @@ def run(
         **config.train,
     )
 
-    train(config, vecenv)
+    config.wandb = init_wandb(config, config.train.exp_id, id=config.train.exp_id)
+    config.train.__dict__.update(dict(config.wandb.config.train))
+
+    if sweep:
+        sweep(config, vecenv)
+    else:
+        train(config, vecenv)
 
 
 if __name__ == "__main__":
